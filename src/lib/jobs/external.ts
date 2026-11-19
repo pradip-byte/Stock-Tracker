@@ -27,6 +27,7 @@ import { recomputeSymbol, type JobResult } from "./core";
 export const STOCK_MAX_SEARCHES = 2;
 export const STOCK_MAX_SEARCHES_RESULT_SOON = 3;
 const RISK_MAX_AGE_DAYS = 90;
+const NEWS_MAX_AGE_DAYS = 90;
 export const SECTOR_MAX_SEARCHES = 3;
 const SECTOR_FRESH_DAYS = 6.5;
 const WEEKLY_DONE_DAYS = 6; // a read newer than this means the stock is done for this week's run
@@ -249,7 +250,7 @@ Use at most ${SECTOR_MAX_SEARCHES} web searches. Cover: the outlook for the next
 
 // ───────────────────────── stock research ─────────────────────────
 
-/** News items that carry a headline and a link the model actually saw, one per source page, at most four. */
+/** News items that carry a headline and a link the model actually saw, not older than 90 days, one per source page, at most four. */
 function usableNews(d: Record<string, unknown>, sources: SearchSource[]) {
   return (Array.isArray(d.key_news) ? d.key_news : [])
     .map((n) => {
@@ -257,6 +258,11 @@ function usableNews(d: Record<string, unknown>, sources: SearchSource[]) {
       return { headline: str(item.headline, 300), url: verifiedUrl(item.url, sources), published: str(item.published, 10), why_it_matters: str(item.why_it_matters, 300) };
     })
     .filter((n) => n.headline && n.url)
+    // an item known to be older than 90 days is not news; undated items are kept
+    .filter((n) => {
+      const date = pageDate(sources.find((x) => x.url === n.url)?.pageAge) ?? (/^\d{4}-\d{2}-\d{2}$/.test(n.published) ? n.published : null);
+      return date == null || dayDiff(date, todayIST()) <= NEWS_MAX_AGE_DAYS;
+    })
     .filter((n, i, all) => all.findIndex((m) => urlKey(m.url!) === urlKey(n.url!)) === i)
     .slice(0, 4);
 }

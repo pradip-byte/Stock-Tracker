@@ -145,7 +145,7 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
     and the API rejects a request that names one; the job reads the rejected names from that error, drops
     them and sends the request again, so in practice the search runs on the sites that permit it (at the time
     of writing: the two exchanges, Business Standard and the company site). At most one news item is kept per
-    source page.
+    source page, and an item known to be more than 90 days old is not counted as news.
   - **Open-search fallback.** If an allowlisted stock call returns no usable news, the call is repeated once
     with open search and a blocklist (`BLOCKED_DOMAINS`: marketsmojo.com, scanx.trade, multibagg.ai,
     ad-hoc-news.de, wikipedia.org, perplexity.ai). That read is stored with `low_grade_sources` and the stock
