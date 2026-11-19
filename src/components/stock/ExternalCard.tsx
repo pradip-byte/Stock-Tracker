@@ -53,6 +53,14 @@ export function ExternalCard({ symbol, read, index }: { symbol: string; read: Ex
       title="External read"
       right={
         <span className="flex items-center gap-3">
+          {read?.lowGradeSources && (
+            <span
+              className="label rounded-sm border border-amber/60 px-1.5 py-1 text-[10px] text-amber"
+              title="The exchanges, established business news and the company's own site had no usable news, so this read comes from an open web search."
+            >
+              Low-grade sources
+            </span>
+          )}
           {read ? (
             <span className={clsx("num text-[10px] uppercase tracking-wider", stale ? "text-amber" : "text-steel")}>
               {stale ? "Stale / " : ""}AI read {fmtIST(read.runAt)}

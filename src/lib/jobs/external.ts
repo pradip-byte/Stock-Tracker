@@ -10,10 +10,15 @@
  *  3. The weekly run skips a stock when it has no result within 30 days, its price
  *     moved less than 5% over the week, and its last read is under 3 weeks old.
  *  4. Every call is logged to ai_runs with searches, tokens and estimated cost.
+ *
+ * Source quality: searches are limited to an allowlist (the exchanges, established
+ * business news, and the company's own site). Only when that finds no usable news
+ * is the call repeated once with open search and a blocklist, and the read is then
+ * marked as built on low-grade sources.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { estimateCost } from "../ai/pricing";
-import { aiConfigured, runResearch, urlKey, verifiedUrl, type ResearchResult, type SearchSource } from "../ai/research";
+import { ALLOWED_DOMAINS, BLOCKED_DOMAINS, aiConfigured, runResearch, siteDomain, urlKey, verifiedUrl, type ResearchResult, type SearchDomains, type SearchSource } from "../ai/research";
 import { dayDiff } from "../format";
 import { todayIST } from "../market";
 import { adminDb } from "../supabase/admin";
@@ -102,7 +107,7 @@ const RULES = `You are a research assistant for one private investor in Indian e
 Rules:
 - Base every statement on the web search results from this conversation. If the results do not cover something, leave that field empty or neutral. Do not fill gaps from memory.
 - Copy URLs exactly as they appear in the search results. Do not construct or guess a URL.
-- Prefer primary and established sources, in this order: exchange filings (bseindia.com, nseindia.com), the company's own investor pages, then Business Standard, Economic Times, Mint, Moneycontrol and Reuters. Use other sites only when none of these cover the point.
+- Prefer primary sources: exchange filings (bseindia.com, nseindia.com) and the company's own investor pages first, then established business news (Business Standard, Economic Times, Mint, Moneycontrol, Reuters). Use other sites only when none of these cover the point.
 - Use each source page for at most one news item.
 - A risk counts only if a search result published in the last 90 days reports it. Give that result's URL and publication date. Leave out any risk you cannot source this way; an empty list is fine.
 - Write plainly and briefly. No recommendations to buy or sell.
@@ -199,17 +204,28 @@ async function latestSector(db: SupabaseClient, sector: string): Promise<SectorN
 }
 
 export async function researchSector(db: SupabaseClient, sector: string, trigger: "weekly" | "manual"): Promise<SectorNote & { costUsd: number }> {
-  const started = Date.now();
-  const runId = await startRun(db, "sector", sector, trigger);
-  const r = await runResearch({
-    system: RULES,
-    maxSearches: SECTOR_MAX_SEARCHES,
-    schema: SECTOR_SCHEMA,
-    prompt: `Research the "${sector}" industry in India as it stands today (${todayIST()}).
+  let costUsd = 0;
+  const call = async (domains: SearchDomains) => {
+    const started = Date.now();
+    const runId = await startRun(db, "sector", sector, trigger);
+    const res = await runResearch({ system: RULES, maxSearches: SECTOR_MAX_SEARCHES, schema: SECTOR_SCHEMA, domains, prompt });
+    await finishRun(db, runId, started, res);
+    costUsd += estimateCost(res.usage);
+    return res;
+  };
+  const prompt = `Research the "${sector}" industry in India as it stands today (${todayIST()}).
 
-Use at most ${SECTOR_MAX_SEARCHES} web searches. Cover: the outlook for the next 6-12 months, dependence on exports and imported inputs, sensitivity to the rupee and to commodity prices, and the main industry-level risks. This note will be reused for every listed company in this industry, so keep it at industry level and do not single out individual companies.`,
-  });
-  await finishRun(db, runId, started, r);
+Use at most ${SECTOR_MAX_SEARCHES} web searches. Cover: the outlook for the next 6-12 months, dependence on exports and imported inputs, sensitivity to the rupee and to commodity prices, and the main industry-level risks. This note will be reused for every listed company in this industry, so keep it at industry level and do not single out individual companies.`;
+  let r = await call({ allowed: ALLOWED_DOMAINS });
+  // the allowlisted sites returned nothing at all: try once more with open search
+  let lowGrade = false;
+  if (r.ok && !r.sources.length) {
+    const open = await call({ blocked: BLOCKED_DOMAINS });
+    if (open.ok && open.sources.length) {
+      r = open;
+      lowGrade = true;
+    }
+  }
   if (!r.ok) throw new Error(`Sector research failed for ${sector}: ${r.error}`);
 
   const d = r.data;
@@ -220,6 +236,7 @@ Use at most ${SECTOR_MAX_SEARCHES} web searches. Cover: the outlook for the next
     currency_commodity_sensitivity: str(d.currency_commodity_sensitivity),
     key_risks: datedRisks(d.key_risks, r.sources, 4),
     confidence: r.sources.length ? int(d.confidence, 0, 100) : Math.min(30, int(d.confidence, 0, 100)),
+    low_grade_sources: lowGrade,
   };
   const { data, error } = await db
     .from("sector_research")
@@ -227,10 +244,22 @@ Use at most ${SECTOR_MAX_SEARCHES} web searches. Cover: the outlook for the next
     .select("id,run_at,outlook_score,payload")
     .single();
   if (error) throw new Error(`sector_research insert: ${error.message}`);
-  return { ...(data as SectorNote), costUsd: estimateCost(r.usage) };
+  return { ...(data as SectorNote), costUsd };
 }
 
 // ───────────────────────── stock research ─────────────────────────
+
+/** News items that carry a headline and a link the model actually saw, one per source page, at most four. */
+function usableNews(d: Record<string, unknown>, sources: SearchSource[]) {
+  return (Array.isArray(d.key_news) ? d.key_news : [])
+    .map((n) => {
+      const item = (n ?? {}) as Record<string, unknown>;
+      return { headline: str(item.headline, 300), url: verifiedUrl(item.url, sources), published: str(item.published, 10), why_it_matters: str(item.why_it_matters, 300) };
+    })
+    .filter((n) => n.headline && n.url)
+    .filter((n, i, all) => all.findIndex((m) => urlKey(m.url!) === urlKey(n.url!)) === i)
+    .slice(0, 4);
+}
 
 /** External score: 50 is neutral. The pull away from 50 is scaled by how confident the read is. */
 export function externalScore(p: { sentiment: number; guidanceTone: number; expectationsTone: number; sectorOutlook: number; confidence: number }): number {
@@ -264,18 +293,14 @@ export async function researchStock(
     }
 
     // 2. company-specific call: two searches, or three when a result is within 30 days
-    const started = Date.now();
-    const runId = await startRun(db, "stock", symbol, trigger);
+    const { data: fund } = await db.from("fundamentals").select("website").eq("symbol", symbol).maybeSingle();
+    const companySite = siteDomain(fund?.website as string | null | undefined);
     const today = todayIST();
     const resultSoon = stock.next_result_date != null && stock.next_result_date >= today && dayDiff(today, stock.next_result_date) <= 30;
     const maxSearches = resultSoon ? STOCK_MAX_SEARCHES_RESULT_SOON : STOCK_MAX_SEARCHES;
     // The provider's own date is deliberately not shown to the model: given one, it tends to echo it back as "confirmed".
     const known = "Report a next result date only if a search result states it explicitly, such as a board-meeting intimation naming the date. If none does, leave the date empty.";
-    const r = await runResearch({
-      system: RULES,
-      maxSearches,
-      schema: STOCK_SCHEMA,
-      prompt: `Company: ${stock.name} (NSE: ${symbol}). Today is ${today}.
+    const prompt = `Company: ${stock.name} (NSE: ${symbol}). Today is ${today}.
 
 You have at most ${maxSearches} web searches. Spend them on company-specific information only:
 1. News about the company from the last 30 days, and what management guided at its latest quarterly result.
@@ -288,23 +313,34 @@ You have at most ${maxSearches} web searches. Spend them on company-specific inf
 
 ${known}
 
-Sector context is already researched and will be attached separately, so do not search for sector outlook, export/import exposure or currency sensitivity.`,
-    });
-    await finishRun(db, runId, started, r);
-    if (!r.ok) return { ok: false, error: r.error, costUsd: estimateCost(r.usage) + sectorCost };
+Sector context is already researched and will be attached separately, so do not search for sector outlook, export/import exposure or currency sensitivity.`;
+    let stockCost = 0;
+    const call = async (domains: SearchDomains) => {
+      const started = Date.now();
+      const runId = await startRun(db, "stock", symbol, trigger);
+      const res = await runResearch({ system: RULES, maxSearches, schema: STOCK_SCHEMA, domains, prompt });
+      await finishRun(db, runId, started, res);
+      stockCost += estimateCost(res.usage);
+      return { res, runId };
+    };
+    // allowlisted sites plus the company's own domain first
+    let { res: r, runId } = await call({ allowed: companySite ? [...ALLOWED_DOMAINS, companySite] : ALLOWED_DOMAINS });
+    if (!r.ok) return { ok: false, error: r.error, costUsd: stockCost + sectorCost };
+    // no usable news from those: one retry with open search and the blocklist, and the read is marked low-grade
+    let lowGrade = false;
+    if (!usableNews(r.data, dedupe(r.sources)).length) {
+      const open = await call({ blocked: BLOCKED_DOMAINS });
+      if (open.res.ok) {
+        r = open.res;
+        runId = open.runId;
+        lowGrade = true;
+      }
+    }
 
     // 3. keep only what the search results support
     const d = r.data;
     const sources = dedupe(r.sources);
-    const news = (Array.isArray(d.key_news) ? d.key_news : [])
-      .map((n) => {
-        const item = (n ?? {}) as Record<string, unknown>;
-        return { headline: str(item.headline, 300), url: verifiedUrl(item.url, sources), published: str(item.published, 10), why_it_matters: str(item.why_it_matters, 300) };
-      })
-      .filter((n) => n.headline && n.url)
-      // no more than one item per source page
-      .filter((n, i, all) => all.findIndex((m) => urlKey(m.url!) === urlKey(n.url!)) === i)
-      .slice(0, 4);
+    const news = usableNews(d, sources);
     const g = (d.last_quarter_guidance ?? {}) as Record<string, unknown>;
     const x = (d.next_result_expectations ?? {}) as Record<string, unknown>;
     const nd = (d.next_result_date ?? {}) as Record<string, unknown>;
@@ -337,6 +373,7 @@ Sector context is already researched and will be attached separately, so do not 
       company_risks: datedRisks(d.company_risks, sources, 3),
       confidence,
       searches: r.usage.searches,
+      low_grade_sources: lowGrade,
     };
     const { error } = await db.from("external_signals").insert({
       symbol,
@@ -360,7 +397,7 @@ Sector context is already researched and will be attached separately, so do not 
     }
     // 5. the external score feeds the verdict
     await recomputeSymbol(db, symbol, 1);
-    return { ok: true, score, costUsd: estimateCost(r.usage) + sectorCost };
+    return { ok: true, score, costUsd: stockCost + sectorCost };
   } catch (e) {
     return { ok: false, error: msg(e) };
   }

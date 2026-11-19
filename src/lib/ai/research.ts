@@ -5,6 +5,8 @@
  *   filtering) so the cap is enforced the same way on every search.
  * - The answer comes back as the input of a strict tool (`submit_research`),
  *   so it always matches the JSON schema.
+ * - Search is limited to an allowlist of sites by default; a caller can ask for
+ *   open search with a blocklist instead (the API takes one or the other).
  * - Every URL Claude saw in search results is collected; callers keep only
  *   links that appear in that set, so a made-up URL can never be stored.
  * - No Batch API and no prompt caching, by design: at this volume the saving
@@ -15,8 +17,51 @@ import { aiModel, emptyUsage, requestTokenCost, type AiUsage } from "./pricing";
 
 export type SearchSource = { url: string; title: string; pageAge: string | null };
 
-/** Sites the web search tool is told never to return: stock-tip aggregators and Wikipedia. Subdomains are covered. */
-export const BLOCKED_DOMAINS = ["marketsmojo.com", "scanx.trade", "multibagg.ai", "ad-hoc-news.de", "wikipedia.org"];
+/** Sites the web search tool may return by default: the exchanges and established business news. Subdomains are covered. */
+export const ALLOWED_DOMAINS = [
+  "bseindia.com",
+  "nseindia.com",
+  "business-standard.com",
+  "economictimes.indiatimes.com",
+  "livemint.com",
+  "moneycontrol.com",
+  "reuters.com",
+  "thehindubusinessline.com",
+  "financialexpress.com",
+  "cnbctv18.com",
+  "ndtvprofit.com",
+];
+
+/** Used only for the open-search retry: stock-tip aggregators, AI answer pages and Wikipedia are never returned. */
+export const BLOCKED_DOMAINS = ["marketsmojo.com", "scanx.trade", "multibagg.ai", "ad-hoc-news.de", "wikipedia.org", "perplexity.ai"];
+
+/**
+ * Allowlisted sites that Anthropic's search crawler is not permitted to read. The API rejects a request
+ * that names one, so they are learned from that error, dropped, and the request is sent again.
+ * Kept in memory only: a site that opens up later is picked up again after a restart.
+ */
+const unreachable = new Set<string>();
+export const unreachableDomains = () => [...unreachable].sort();
+
+function inaccessibleFrom(e: unknown): string[] {
+  if (!(e instanceof Anthropic.BadRequestError) || !/not accessible to our user agent/i.test(e.message)) return [];
+  const list = e.message.match(/\[([^\]]*)\]/)?.[1] ?? "";
+  return [...list.matchAll(/['"]([a-z0-9.-]+)['"]/gi)].map((m) => m[1].toLowerCase());
+}
+
+export type SearchDomains = { allowed: string[] } | { blocked: string[] };
+
+/** "https://www.infosys.com/investors" -> "infosys.com". Null when it is not a plain domain or is on the blocklist. */
+export function siteDomain(website: string | null | undefined): string | null {
+  if (!website) return null;
+  try {
+    const host = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`).hostname.toLowerCase().replace(/^www\./, "");
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) return null;
+    return BLOCKED_DOMAINS.some((b) => host === b || host.endsWith(`.${b}`)) ? null : host;
+  } catch {
+    return null;
+  }
+}
 
 export type ResearchResult =
   | { ok: true; data: Record<string, unknown>; sources: SearchSource[]; usage: AiUsage; model: string }
@@ -54,6 +99,8 @@ export async function runResearch(opts: {
   /** JSON schema of the answer. Strict mode: every object needs `required` and additionalProperties:false. */
   schema: Record<string, unknown>;
   maxSearches: number;
+  /** Which sites the search may return. Defaults to the allowlist. */
+  domains?: SearchDomains;
 }): Promise<ResearchResult> {
   const usage = emptyUsage();
   const sources: SearchSource[] = [];
@@ -63,12 +110,20 @@ export async function runResearch(opts: {
   const fallback: Pick<Anthropic.Beta.MessageCreateParamsNonStreaming, "betas" | "fallbacks"> = requested.startsWith("claude-sonnet-5-5")
     ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }
     : {};
+  const domains = opts.domains ?? { allowed: ALLOWED_DOMAINS };
+  const domainFilter = () =>
+    "allowed" in domains ? { allowed_domains: domains.allowed.filter((d) => !unreachable.has(d)) } : { blocked_domains: domains.blocked };
+  const onList = (url: string) => {
+    if (!("allowed" in domains)) return true;
+    const host = siteDomain(url);
+    return host != null && domains.allowed.some((d) => host === d || host.endsWith(`.${d}`));
+  };
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: opts.prompt }];
 
   try {
     // A long search turn can come back as pause_turn; resend it unchanged to let the server continue.
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await anthropic().beta.messages.create({
+      const create = () => anthropic().beta.messages.create({
         model: requested,
         max_tokens: 16000,
         system: opts.system,
@@ -81,7 +136,7 @@ export async function runResearch(opts: {
             name: "web_search",
             max_uses: opts.maxSearches,
             allowed_callers: ["direct"],
-            blocked_domains: BLOCKED_DOMAINS,
+            ...domainFilter(),
             user_location: { type: "approximate", country: "IN", timezone: "Asia/Kolkata" },
           },
           {
@@ -92,6 +147,17 @@ export async function runResearch(opts: {
           },
         ],
       });
+      let res: Awaited<ReturnType<typeof create>>;
+      try {
+        res = await create();
+      } catch (e) {
+        // some allowlisted sites refuse the crawler: drop them and send the request once more
+        const bad = inaccessibleFrom(e);
+        if (!bad.length || !("allowed" in domains)) throw e;
+        for (const d of bad) unreachable.add(d);
+        if (!domains.allowed.some((d) => !unreachable.has(d))) throw e;
+        res = await create();
+      }
       model = res.model;
       addUsage(usage, model, res.usage);
 
@@ -99,7 +165,8 @@ export async function runResearch(opts: {
         // a successful search has a list of results; an error (for example max_uses_exceeded) has a single object
         if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
           for (const r of block.content) {
-            if (r.type === "web_search_result") sources.push({ url: r.url, title: r.title, pageAge: r.page_age ?? null });
+            // in allowlist mode a result from any other site is ignored, so it can never be cited
+            if (r.type === "web_search_result" && onList(r.url)) sources.push({ url: r.url, title: r.title, pageAge: r.page_age ?? null });
           }
         }
       }

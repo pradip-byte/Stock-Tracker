@@ -290,6 +290,7 @@ async function getExternal(db: SupabaseClient, symbol: string): Promise<External
     sentimentRationale: p.sentiment_rationale ?? "",
     confidence: Number(e.confidence ?? 0),
     searches: n(p.searches),
+    lowGradeSources: p.low_grade_sources === true,
     keyNews: Array.isArray(p.key_news) ? p.key_news : [],
     guidance: p.last_quarter_guidance ?? { summary: "", tone: 0, url: null },
     expectations: p.next_result_expectations ?? { summary: "", tone: 0 },

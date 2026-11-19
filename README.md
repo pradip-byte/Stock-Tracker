@@ -137,11 +137,20 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
     company-specific items.
   - **Search caps**, enforced by the API (`max_uses`): 2 web searches per stock call, 3 per industry call.
     A stock whose result is within 30 days gets a third search, aimed at analyst expectations for that quarter.
-  - **Source rules.** The search tool is told never to return marketsmojo.com, scanx.trade, multibagg.ai,
-    ad-hoc-news.de or wikipedia.org (`BLOCKED_DOMAINS` in `src/lib/ai/research.ts`). The prompt asks for
-    exchange filings, company investor pages, Business Standard, Economic Times, Mint, Moneycontrol and
-    Reuters first; that preference is guidance to the model, not a hard filter. At most one news item is kept
-    per source page.
+  - **Source rules.** Searches are limited to an allowlist (`ALLOWED_DOMAINS` in `src/lib/ai/research.ts`):
+    bseindia.com, nseindia.com, business-standard.com, economictimes.indiatimes.com, livemint.com,
+    moneycontrol.com, reuters.com, thehindubusinessline.com, financialexpress.com, cnbctv18.com and
+    ndtvprofit.com, plus the company's own website (from the data provider, stored in `fundamentals.website`).
+    Results from any other site are ignored. Several of these sites do not allow Anthropic's search crawler,
+    and the API rejects a request that names one; the job reads the rejected names from that error, drops
+    them and sends the request again, so in practice the search runs on the sites that permit it (at the time
+    of writing: the two exchanges, Business Standard and the company site). At most one news item is kept per
+    source page.
+  - **Open-search fallback.** If an allowlisted stock call returns no usable news, the call is repeated once
+    with open search and a blocklist (`BLOCKED_DOMAINS`: marketsmojo.com, scanx.trade, multibagg.ai,
+    ad-hoc-news.de, wikipedia.org, perplexity.ai). That read is stored with `low_grade_sources` and the stock
+    page shows a "Low-grade sources" label. The retry is a second paid call. An industry note falls back the
+    same way only when the allowlisted search returns no results at all.
   - **Risks need a dated source.** A company or industry risk is kept only when it links to a search result
     dated within the last 90 days. Anything else is dropped, so the list can be empty.
   - **Sources.** Every URL in the search results is stored with the run. A link in the answer is kept only

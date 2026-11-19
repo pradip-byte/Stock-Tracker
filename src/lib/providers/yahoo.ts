@@ -96,6 +96,7 @@ export class YahooProvider implements MarketDataProvider {
       fiscalYearEndMonth: fye ? new Date(fye).getUTCMonth() + 1 : null,
       sector: s?.assetProfile?.sector ?? null,
       industry: s?.assetProfile?.industry ?? null,
+      website: s?.assetProfile?.website ?? null,
     };
   }
 

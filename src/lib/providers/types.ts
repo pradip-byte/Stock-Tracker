@@ -19,6 +19,7 @@ export type ProviderFundamentals = {
   fiscalYearEndMonth: number | null; // 1-12
   sector: string | null;
   industry: string | null;
+  website: string | null;
 };
 
 export type ProviderQuarter = {

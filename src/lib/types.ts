@@ -112,6 +112,8 @@ export type ExternalRead = {
   sentimentRationale: string;
   confidence: number;
   searches: number | null;
+  /** True when the allowlisted sites had no usable news and the read came from open search. */
+  lowGradeSources: boolean;
   keyNews: { headline: string; url: string; published: string; why_it_matters: string }[];
   guidance: { summary: string; tone: number; url: string | null };
   expectations: { summary: string; tone: number };
