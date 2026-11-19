@@ -233,7 +233,7 @@ export function QuarterBars({
                   y={by}
                   width={bw}
                   height={Math.max(bh, 1)}
-                  className={i === lastIdx ? "fill-amber" : "fill-steel/55"}
+                  className={q.checkData ? "fill-transparent stroke-amber [stroke-dasharray:3_2]" : i === lastIdx ? "fill-amber" : "fill-steel/55"}
                   style={{ transformBox: "fill-box", originY: neg ? 0 : 1 }}
                   initial={{ scaleY: 0 }}
                   animate={{ scaleY: 1 }}
@@ -253,15 +253,16 @@ export function QuarterBars({
               </>
             )}
             <text x={bx + bw / 2} y={H - bottom + 11} textAnchor="middle" className="num fill-steel text-[8px]">
-              {q.label.replace(" FY", "'")}
+              {q.label.replace(/ (FY|CY)/, "'")}
             </text>
+            {q.checkData && <title>{`${q.label}: check data, ${q.checkData}`}</title>}
             <text
               x={bx + bw / 2}
               y={H - bottom + 23}
               textAnchor="middle"
-              className={clsx("num text-[8.5px]", yoy == null ? "fill-steel/60" : yoy >= 0 ? "fill-gain" : "fill-loss")}
+              className={clsx("num text-[8.5px]", q.checkData ? "fill-amber" : yoy == null ? "fill-steel/60" : yoy >= 0 ? "fill-gain" : "fill-loss")}
             >
-              {yoy == null ? "–" : pct(yoy, 1)}
+              {q.checkData ? "check" : yoy == null ? "–" : pct(yoy, 1)}
             </text>
           </g>
         );
@@ -270,7 +271,11 @@ export function QuarterBars({
   );
 }
 
-/** Backtest hit rates after 5/20/60 sessions, with average return alongside. */
+/**
+ * Backtest hit rates after 5/20/60 sessions, with the average move alongside.
+ * The thin marker on each bar is the any-day baseline for the same history:
+ * a bar that ends past the marker did better than picking a random day.
+ */
 export function HitRateBars({ windows, delay = seq.charts }: { windows: BacktestWindow[]; delay?: number }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -278,18 +283,23 @@ export function HitRateBars({ windows, delay = seq.charts }: { windows: Backtest
         <div key={w.days} className="grid grid-cols-[28px_1fr_38px_56px] items-center gap-2">
           <span className="num text-[10px] text-steel">{w.days}D</span>
           <div className="relative h-2 bg-metal-2">
-            <motion.div
-              className="absolute inset-y-0 left-0 origin-left bg-amber"
-              style={{ width: `${w.hitRate}%` }}
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              transition={{ duration: dur.md, ease: ease.out, delay: delay + i * 0.07 }}
-            />
-            {/* coin-flip reference */}
-            <span className="absolute inset-y-[-2px] left-1/2 w-px bg-ink/60" />
+            {w.hitRate != null && (
+              <motion.div
+                className="absolute inset-y-0 left-0 origin-left bg-amber"
+                style={{ width: `${w.hitRate}%` }}
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: 1 }}
+                transition={{ duration: dur.md, ease: ease.out, delay: delay + i * 0.07 }}
+              />
+            )}
+            {w.baseline != null && (
+              <span className="absolute inset-y-[-2px] w-px bg-ink/70" style={{ left: `${w.baseline}%` }} title={`Any-day baseline ${w.baseline}%`} />
+            )}
           </div>
-          <span className="num text-right text-[11px] text-ink">{w.hitRate}%</span>
-          <span className={clsx("num text-right text-[11px]", toneOf(w.avgReturn))}>{pct(w.avgReturn, 1)}</span>
+          <span className="num text-right text-[11px] text-ink">{w.hitRate != null ? `${w.hitRate.toFixed(0)}%` : "—"}</span>
+          <span className={clsx("num text-right text-[11px]", w.avgReturn == null ? "text-steel" : toneOf(w.avgReturn))}>
+            {w.avgReturn != null ? pct(w.avgReturn, 1) : "—"}
+          </span>
         </div>
       ))}
     </div>

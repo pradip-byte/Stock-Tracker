@@ -80,18 +80,20 @@ export class YahooProvider implements MarketDataProvider {
     const s: any = await withRetry(() =>
       this.yf.quoteSummary(
         providerSymbol,
-        { modules: ["assetProfile", "summaryDetail", "financialData"] },
+        { modules: ["assetProfile", "summaryDetail", "financialData", "defaultKeyStatistics"] },
         NO_VALIDATE,
       ),
     );
     const roe = num(s?.financialData?.returnOnEquity);
     const de = num(s?.financialData?.debtToEquity); // Yahoo reports this as a percentage
     const margin = num(s?.financialData?.profitMargins);
+    const fye = s?.defaultKeyStatistics?.lastFiscalYearEnd ?? s?.defaultKeyStatistics?.nextFiscalYearEnd;
     return {
       pe: num(s?.summaryDetail?.trailingPE),
       roe: roe == null ? null : roe * 100,
       debtToEquity: de == null ? null : de / 100,
       profitMargin: margin == null ? null : margin * 100,
+      fiscalYearEndMonth: fye ? new Date(fye).getUTCMonth() + 1 : null,
       sector: s?.assetProfile?.sector ?? null,
       industry: s?.assetProfile?.industry ?? null,
     };

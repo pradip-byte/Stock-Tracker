@@ -4,12 +4,15 @@
  * provider; a symbol that still fails is counted and logged, and the job moves on.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { addInto, backtestStock, emptyResult, fromRows, toRows, type BacktestResult } from "../backtest";
 import { analyseQuarters, eventScore, fiscalLabel, postResultReaction } from "../events";
+import { dayDiff } from "../format";
 import { isAfterClose, isMarketOpen, istParts, todayIST } from "../market";
 import { getProvider } from "../providers";
 import { computeSeries, snapshotAt, technicalScore } from "../signals";
 import { adminDb } from "../supabase/admin";
-import type { Candle } from "../types";
+import type { Candle, SignalKind } from "../types";
+import { computeVerdict, type SignalOdds } from "../verdict";
 
 type StockRef = { symbol: string; provider_symbol: string; kind: string; last_candle: string | null };
 type Failure = { symbol: string; error: string };
@@ -114,21 +117,125 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
 
   const last = snaps[snaps.length - 1];
   const t = technicalScore(last, series.macdHist[n - 2], candles[n - 1].close >= candles[n - 2].close);
+
+  // verdicts: combine the technical read with results, fundamentals and the measured signal odds
+  const { data: ctx } = await db
+    .from("stock_latest")
+    .select("sector,event,external,roe,debt_to_equity,pe,next_result_date,next_result_is_estimate")
+    .eq("symbol", symbol)
+    .maybeSingle();
+  const active: SignalKind | null = last.sig_bounce ? "Bounce" : last.sig_breakdown ? "Breakdown" : last.sig_trend ? "Trend" : null;
+  const odds = active ? await signalOdds(db, symbol, ctx?.sector ?? null, active) : null;
+  const num = (x: unknown) => (x == null ? null : Number(x));
+  const today = todayIST();
+  const daysToResult = ctx?.next_result_date && ctx.next_result_date >= today ? dayDiff(today, ctx.next_result_date) : null;
+  const v = computeVerdict({
+    close: last.close,
+    technical: t.score,
+    bounce: last.sig_bounce,
+    trend: last.sig_trend,
+    breakdown: last.sig_breakdown,
+    rewardRisk: t.rewardRisk,
+    atrRisk: t.risk,
+    sma50: last.sma50,
+    sma200: last.sma200,
+    distHi52: last.dist_hi52_pct,
+    return1y: n > 251 ? (candles[n - 1].close / candles[n - 251].close - 1) * 100 : null,
+    event: num(ctx?.event),
+    external: num(ctx?.external),
+    roe: num(ctx?.roe),
+    debtToEquity: num(ctx?.debt_to_equity),
+    pe: num(ctx?.pe),
+    isFinancial: /financ|bank/i.test(ctx?.sector ?? ""),
+    daysToResult,
+    resultIsEstimate: Boolean(ctx?.next_result_is_estimate),
+    odds,
+  });
+
   const { error: e2 } = await db.from("scores").upsert(
     {
       symbol,
       date: last.date,
       technical: t.score,
       technical_reasons: t.reasons,
-      risk: t.risk,
+      event: num(ctx?.event),
+      external: num(ctx?.external),
+      overall: v.overall,
+      short_verdict: v.shortVerdict,
+      long_verdict: v.longVerdict,
+      risk: v.risk,
       target: t.target,
       stop: t.stop,
       reward_risk: t.rewardRisk,
+      verdict_reasons: {
+        short: v.shortReasons,
+        long: v.longReasons,
+        shortScore: v.shortScore,
+        longScore: v.longScore,
+        odds: v.odds,
+      },
       computed_at: now,
     },
     { onConflict: "symbol,date" },
   );
   if (e2) throw new Error(`scores upsert: ${e2.message}`);
+}
+
+/**
+ * Measured 20-session odds for a signal. Uses this stock's own history when it
+ * has at least 8 past cases, otherwise its sector, otherwise all tracked stocks.
+ */
+async function signalOdds(db: SupabaseClient, symbol: string, sector: string | null, signal: SignalKind): Promise<SignalOdds | null> {
+  const scopes: ["stock" | "sector" | "all", string | null][] = [
+    ["stock", symbol],
+    ["sector", sector],
+    ["all", "ALL"],
+  ];
+  let fallback: SignalOdds | null = null;
+  for (const [scope, key] of scopes) {
+    if (!key) continue;
+    const { data } = await db
+      .from("signal_backtests")
+      .select("signal,samples,hit_rate,avg_return")
+      .eq("scope", scope)
+      .eq("scope_key", key)
+      .eq("horizon_days", 20)
+      .in("signal", [signal, "Baseline"]);
+    const row = data?.find((r) => r.signal === signal);
+    if (!row || row.hit_rate == null) continue;
+    const base = data?.find((r) => r.signal === "Baseline");
+    const odds: SignalOdds = {
+      signal,
+      horizon: 20,
+      hitRate: Number(row.hit_rate),
+      avgReturn: Number(row.avg_return ?? 0),
+      samples: row.samples,
+      scope,
+      baseline: base?.hit_rate == null ? null : Number(base.hit_rate),
+    };
+    if (odds.samples >= 8) return odds;
+    fallback ??= odds;
+  }
+  return fallback;
+}
+
+/** Recompute indicators, scores and verdicts for every backfilled stock. */
+export async function recomputeAll(onProgress?: (symbol: string, err?: string) => void): Promise<{ ok: number; failed: number }> {
+  const db = adminDb();
+  const { data } = await db.from("stocks").select("symbol").eq("kind", "equity").eq("backfill_status", "done").order("symbol");
+  let ok = 0;
+  let failed = 0;
+  await pool(data ?? [], 5, async (s) => {
+    try {
+      await recomputeSymbol(db, s.symbol, 1);
+      ok++;
+      onProgress?.(s.symbol);
+    } catch (e) {
+      failed++;
+      onProgress?.(s.symbol, msg(e));
+    }
+  });
+  return { ok, failed };
 }
 
 // ───────────────────────── backfill ─────────────────────────
@@ -353,7 +460,7 @@ export async function refreshFundamentalsFor(db: SupabaseClient, symbol: string,
     return {
       symbol,
       period_end: q.periodEnd,
-      fiscal_label: fiscalLabel(q.periodEnd),
+      fiscal_label: fiscalLabel(q.periodEnd, fund.fiscalYearEndMonth),
       result_date: q.reportedAt ? istParts(new Date(q.reportedAt)).date : null,
       reported_at: q.reportedAt,
       revenue: q.revenue,
@@ -391,6 +498,7 @@ export async function refreshFundamentalsFor(db: SupabaseClient, symbol: string,
       reaction1d: num(q.reaction_1d),
       reaction5d: num(q.reaction_5d),
     })),
+    fund.fiscalYearEndMonth,
   ).slice(-8);
   const ev = eventScore(quarters);
 
@@ -404,6 +512,7 @@ export async function refreshFundamentalsFor(db: SupabaseClient, symbol: string,
       roe: fund.roe,
       debt_to_equity: fund.debtToEquity,
       profit_margin: fund.profitMargin,
+      fiscal_year_end_month: fund.fiscalYearEndMonth,
       event_score: ev.score,
       event_reasons: ev.reasons,
       error: null,
@@ -412,6 +521,8 @@ export async function refreshFundamentalsFor(db: SupabaseClient, symbol: string,
     { onConflict: "symbol" },
   );
   if (fe) throw new Error(`fundamentals upsert: ${fe.message}`);
+  // the verdict depends on the event score and result date, so refresh it now
+  await recomputeSymbol(db, symbol, 1);
 }
 
 /**
@@ -464,6 +575,118 @@ export async function refreshFundamentals(
       () => Date.now() - started > budget,
     );
     const remaining = todo.length - ok - failures.length;
+    const status = failures.length || remaining > 0 ? "partial" : "ok";
+    const detail = { remaining, total: todo.length };
+    await finishJob(db, id, { status, ok, failures, detail });
+    return { status, ok, failed: failures.length, detail };
+  } catch (e) {
+    await finishJob(db, id, { status: "error", error: msg(e) });
+    return { status: "error", ok: 0, failed: 0, error: msg(e) };
+  }
+}
+
+// ───────────────────────── signal backtest (weekly) ─────────────────────────
+
+async function allCandles(db: SupabaseClient, symbol: string): Promise<Candle[]> {
+  const out: Candle[] = [];
+  for (let from = 0; from < 8000; from += 1000) {
+    const { data, error } = await db
+      .from("candles_daily")
+      .select("date,open,high,low,close,volume")
+      .eq("symbol", symbol)
+      .order("date", { ascending: true })
+      .range(from, from + 999);
+    if (error) throw new Error(`candles read: ${error.message}`);
+    for (const r of data ?? []) out.push({ time: r.date, open: +r.open, high: +r.high, low: +r.low, close: +r.close, volume: +r.volume });
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+/**
+ * Backtest every signal on each stock's full history, then pool the results by
+ * sector and across all stocks. Stocks tested in the last 6 days are skipped,
+ * so the job can run in time-boxed batches until nothing remains.
+ */
+export async function runBacktest(
+  opts: { force?: boolean; budgetMs?: number; onProgress?: (s: string, err?: string) => void } = {},
+): Promise<JobResult> {
+  const db = adminDb();
+  const id = await startJob(db, "backtest");
+  const started = Date.now();
+  const budget = opts.budgetMs ?? 45000;
+  try {
+    const [{ data: stocks, error }, { data: done }] = await Promise.all([
+      db.from("stocks").select("symbol,sector").eq("kind", "equity").eq("backfill_status", "done").order("symbol"),
+      db.from("signal_backtests").select("scope_key,computed_at").eq("scope", "stock").eq("signal", "Baseline").eq("horizon_days", 5).limit(5000),
+    ]);
+    if (error) throw new Error(error.message);
+    const seen = new Map((done ?? []).map((r) => [r.scope_key as string, r.computed_at as string]));
+    const cutoff = new Date(Date.now() - 6 * 86400000).toISOString();
+    const todo = (stocks ?? []).filter((s) => opts.force || !seen.has(s.symbol) || seen.get(s.symbol)! < cutoff);
+    if (!todo.length) {
+      const reason = "every stock was backtested in the last 6 days";
+      await finishJob(db, id, { status: "skipped", detail: { reason } });
+      return { status: "skipped", ok: 0, failed: 0, detail: { reason } };
+    }
+
+    let ok = 0;
+    const failures: Failure[] = [];
+    await pool(
+      todo,
+      4,
+      async (s) => {
+        try {
+          const rows = toRows("stock", s.symbol, backtestStock(await allCandles(db, s.symbol)));
+          const now = new Date().toISOString();
+          const { error: e } = await db
+            .from("signal_backtests")
+            .upsert(rows.map((r) => ({ ...r, computed_at: now })), { onConflict: "scope,scope_key,signal,horizon_days" });
+          if (e) throw new Error(`backtest upsert: ${e.message}`);
+          ok++;
+          opts.onProgress?.(s.symbol);
+        } catch (e) {
+          failures.push({ symbol: s.symbol, error: msg(e) });
+          opts.onProgress?.(s.symbol, msg(e));
+        }
+      },
+      () => Date.now() - started > budget,
+    );
+    const remaining = todo.length - ok - failures.length;
+
+    // pool per-stock results into sectors and the whole universe once every stock is in
+    if (remaining === 0) {
+      const sectorOf = new Map((stocks ?? []).map((s) => [s.symbol as string, (s.sector as string | null) ?? "Other"]));
+      const bySector = new Map<string, BacktestResult>();
+      const all = emptyResult();
+      for (let from = 0; from < 20000; from += 1000) {
+        const { data, error: e } = await db
+          .from("signal_backtests")
+          .select("scope_key,signal,horizon_days,samples,hit_rate,avg_return")
+          .eq("scope", "stock")
+          .order("scope_key")
+          .order("signal")
+          .order("horizon_days")
+          .range(from, from + 999);
+        if (e) throw new Error(`backtest read: ${e.message}`);
+        for (const r of data ?? []) {
+          const sector = sectorOf.get(r.scope_key);
+          if (!sector) continue; // stock no longer tracked
+          const one = fromRows([r as never]);
+          if (!bySector.has(sector)) bySector.set(sector, emptyResult());
+          addInto(bySector.get(sector)!, one);
+          addInto(all, one);
+        }
+        if (!data || data.length < 1000) break;
+      }
+      const now = new Date().toISOString();
+      const pooled = [...[...bySector].flatMap(([k, r]) => toRows("sector", k, r)), ...toRows("all", "ALL", all)];
+      const { error: e } = await db
+        .from("signal_backtests")
+        .upsert(pooled.map((r) => ({ ...r, computed_at: now })), { onConflict: "scope,scope_key,signal,horizon_days" });
+      if (e) throw new Error(`pooled upsert: ${e.message}`);
+    }
+
     const status = failures.length || remaining > 0 ? "partial" : "ok";
     const detail = { remaining, total: todo.length };
     await finishJob(db, id, { status, ok, failures, detail });

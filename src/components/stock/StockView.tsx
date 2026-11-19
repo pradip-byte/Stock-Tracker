@@ -8,15 +8,15 @@ import { ViewTransition, useState, useTransition } from "react";
 import { removeStockAction, setWatchlistAction } from "@/app/actions";
 import { changePct, dayDiff, inr, pct, shortDate, toneOf } from "@/lib/format";
 import { fmtIST } from "@/lib/market";
-import type { Quarter, StockDetail, StockRow } from "@/lib/types";
+import type { Quarter, SignalStats, StockDetail, StockRow } from "@/lib/types";
 import { CandleChart } from "../charts/CandleChart";
-import { QuarterBars, RadialGauge, RangeSlider } from "../charts/primitives";
+import { HitRateBars, QuarterBars, RadialGauge, RangeSlider } from "../charts/primitives";
 import { Odometer } from "../motion/Odometer";
 import { Rise, TypeIn } from "../motion/primitives";
 import { dur, ease, seq } from "../motion/tokens";
 import { useQuote } from "../shell/quotes";
 import { vtName } from "../shell/StockLink";
-import { Button, Card, Pending, Stat } from "../ui/core";
+import { Button, Card, Pending, Stat, VerdictStamp } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 
 function RewardRisk({ price, stop, target }: { price: number; stop: number; target: number }) {
@@ -179,6 +179,16 @@ function Results({
                 ))}
                 {reported.length === 0 && <p className="mt-2 text-[12px] text-steel">No announcement dates available.</p>}
               </div>
+              {quarters.some((q) => q.checkData) && (
+                <p className="num col-span-12 border-t border-line pt-2.5 text-[10px] uppercase leading-relaxed tracking-wider text-amber">
+                  Check data:{" "}
+                  {quarters
+                    .filter((q) => q.checkData)
+                    .map((q) => `${q.label} (${q.checkData})`)
+                    .join("; ")}
+                  . Shown with a dashed outline and left out of growth figures and the event score.
+                </p>
+              )}
               {quarters.length < 8 && (
               <p className="num col-span-12 border-t border-line pt-2.5 text-[10px] uppercase leading-relaxed tracking-wider text-steel">
                 <span className="text-amber">{quarters.length} of 8 quarters available.</span> Yahoo carries only the most recent quarters
@@ -193,10 +203,33 @@ function Results({
   );
 }
 
-const SIGNALS: { key: "bounce" | "trend" | "breakdown"; label: string; rule: string }[] = [
-  { key: "bounce", label: "Bounce-back", rule: "RSI under 35, within 3% of support or the 200 DMA, with a reversal candle or 1.5x volume." },
-  { key: "trend", label: "Trend", rule: "Price above the 50 DMA, and the 50 DMA above the 200 DMA." },
-  { key: "breakdown", label: "Breakdown warning", rule: "Support lost on volume, a fresh close under the 200 DMA, or a 20-day closing low in a downtrend." },
+function ReasonList({ title, items, start, empty = "Not computed yet." }: { title: string; items: string[]; start: number; empty?: string }) {
+  return (
+    <div>
+      <span className="label text-[10px] text-amber">{title}</span>
+      <ol className="mt-1.5 flex flex-col">
+        {items.map((r, i) => (
+          <motion.li
+            key={i}
+            className="flex gap-3 border-t border-line/70 py-2 text-[12.5px] leading-snug text-ink"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: dur.sm, ease: ease.out, delay: seq.charts + (start + i) * 0.04 }}
+          >
+            <span className="num pt-px text-[10px] text-steel">{String(i + 1).padStart(2, "0")}</span>
+            {r}
+          </motion.li>
+        ))}
+        {items.length === 0 && <li className="border-t border-line/70 py-2 text-[12.5px] text-steel">{empty}</li>}
+      </ol>
+    </div>
+  );
+}
+
+const SIGNALS: { key: "bounce" | "trend" | "breakdown"; kind: "Bounce" | "Trend" | "Breakdown"; label: string; rule: string }[] = [
+  { key: "bounce", kind: "Bounce", label: "Bounce-back", rule: "RSI under 35, within 3% of support or the 200 DMA, with a reversal candle or 1.5x volume." },
+  { key: "trend", kind: "Trend", label: "Trend", rule: "Price above the 50 DMA, and the 50 DMA above the 200 DMA." },
+  { key: "breakdown", kind: "Breakdown", label: "Breakdown warning", rule: "Support lost on volume, a fresh close under the 200 DMA, or a 20-day closing low in a downtrend." },
 ];
 
 function Tech({ row, price }: { row: StockRow; price: number }) {
@@ -277,7 +310,7 @@ function Controls({ row }: { row: StockRow }) {
 }
 
 export function StockView({ detail }: { detail: StockDetail }) {
-  const { row, candles, quarters, today } = detail;
+  const { row, candles, quarters, today, backtests } = detail;
   const upcoming = row.nextResultDate != null && row.nextResultDate >= today;
   const daysToResult = upcoming ? dayDiff(today, row.nextResultDate!) : null;
   const q = useQuote(row.symbol);
@@ -341,11 +374,14 @@ export function StockView({ detail }: { detail: StockDetail }) {
 
         <div className="col-span-12 flex flex-col items-start gap-3 sm:col-span-5 lg:col-span-3 lg:items-end">
           <Controls row={row} />
-          <span className="num text-[10px] uppercase leading-relaxed tracking-wider text-steel lg:text-right">
-            Short and long-term verdicts
-            <br />
-            arrive in <span className="text-ink">Phase 3</span>
-          </span>
+          {row.shortVerdict && row.longVerdict ? (
+            <div className="flex flex-wrap gap-x-8 gap-y-4">
+              <VerdictStamp verdict={row.shortVerdict} horizon="Short term / days to weeks" risk={row.risk ?? undefined} delay={seq.charts} />
+              <VerdictStamp verdict={row.longVerdict} horizon="Long term / 1 year+" delay={seq.charts + 0.14} />
+            </div>
+          ) : (
+            <span className="num text-[10px] uppercase tracking-wider text-steel">No verdict computed yet</span>
+          )}
         </div>
       </div>
 
@@ -394,7 +430,11 @@ export function StockView({ detail }: { detail: StockDetail }) {
                       <EmptyGauge label="External" phase={4} />
                     </div>
                     <div className="flex gap-3">
-                      <EmptyGauge label="Overall" phase={3} />
+                      {row.overall != null ? (
+                        <RadialGauge value={row.overall} label="Overall" size={92} delay={seq.charts + 0.18} />
+                      ) : (
+                        <EmptyGauge label="Overall" phase={3} />
+                      )}
                       <div className="flex w-[92px] flex-col justify-center gap-1">
                         <span className="label text-[9px] text-steel">Next result</span>
                         <span className={clsx("display text-2xl", !upcoming && "text-steel")}>
@@ -423,64 +463,64 @@ export function StockView({ detail }: { detail: StockDetail }) {
             </div>
           </div>
 
-          {/* ── Reasons, signals ── */}
+          {/* ── Verdict, signals, score reasons ── */}
           <div className="grid grid-cols-12 gap-3">
-            <Card index={5} className="col-span-12 md:col-span-6 xl:col-span-4" title="Why this technical score" right={<Freshness mode="eod" at={row.indDate} />}>
-              <ol className="flex flex-col">
-                {row.techReasons.map((r, i) => (
-                  <motion.li
-                    key={i}
-                    className="flex gap-3 border-b border-line/70 py-2 text-[12.5px] leading-snug text-ink last:border-b-0"
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: dur.sm, ease: ease.out, delay: seq.charts + i * 0.05 }}
-                  >
-                    <span className="num pt-px text-[10px] text-steel">{String(i + 1).padStart(2, "0")}</span>
-                    {r}
-                  </motion.li>
-                ))}
-                {row.techReasons.length === 0 && <li className="text-[12.5px] text-steel">No reasons recorded.</li>}
-              </ol>
-            </Card>
-
-            <Card index={6} className="col-span-12 md:col-span-6 xl:col-span-4" title="Signals" right={<Freshness mode="eod" at={row.indDate} />}>
-              <div className="flex flex-col gap-3.5">
-                {SIGNALS.map((s) => {
-                  const active = row[s.key];
-                  return (
-                    <div key={s.key} className={clsx(!active && "opacity-55")}>
-                      <span className="label flex items-center gap-2 text-[11px] text-ink">
-                        <span className={clsx("inline-block size-1.5 rotate-45", active ? "bg-amber" : "bg-line")} />
-                        {s.label}
-                        <span className={active ? "text-amber" : "text-steel"}>{active ? "active" : "not active"}</span>
-                      </span>
-                      <p className="mt-1 pl-3.5 text-[12px] leading-snug text-steel">{s.rule}</p>
-                    </div>
-                  );
-                })}
+            <Card index={5} className="col-span-12 md:col-span-6 xl:col-span-4" title="Why this verdict" right={<Freshness mode="eod" at={row.indDate} />}>
+              <div className="flex flex-col gap-4">
+                <ReasonList title={`Short term${row.shortScore != null ? ` / ${row.shortScore} of 100` : ""}`} items={row.shortReasons} start={0} />
+                <ReasonList title={`Long term${row.longScore != null ? ` / ${row.longScore} of 100` : ""}`} items={row.longReasons} start={5} />
                 <p className="num border-t border-line pt-2.5 text-[10px] uppercase leading-relaxed tracking-wider text-steel">
-                  Measured hit rates for each signal arrive with the <span className="text-ink">Phase 3</span> backtest
+                  65+ favourable / 45-64 neutral / under 45 avoid. Mechanical reading, not advice.
                 </p>
               </div>
             </Card>
 
-            <Card
-              index={7}
-              className="col-span-12 xl:col-span-4"
-              title="Why this event score"
-              right={<Freshness mode="text" label={row.fundamentalsAt ? `Checked ${fmtIST(row.fundamentalsAt)}` : "Not fetched yet"} />}
-            >
-              <ol className="flex flex-col">
-                {row.eventReasons.map((r, i) => (
-                  <li key={i} className="flex gap-3 border-b border-line/70 py-2 text-[12.5px] leading-snug text-ink last:border-b-0">
-                    <span className="num pt-px text-[10px] text-steel">{String(i + 1).padStart(2, "0")}</span>
-                    {r}
-                  </li>
-                ))}
-                {row.eventReasons.length === 0 && (
-                  <li className="text-[12.5px] text-steel">Results have not been fetched for this stock yet.</li>
-                )}
-              </ol>
+            <Card index={6} className="col-span-12 md:col-span-6 xl:col-span-4" title="Signals and measured odds" right={<Freshness mode="text" label="10Y backtest" />}>
+              <div className="flex flex-col gap-4">
+                <div className="num grid grid-cols-[28px_1fr_38px_56px] gap-2 text-[9px] uppercase tracking-wider text-steel">
+                  <span />
+                  <span>Hit rate / marker = any day</span>
+                  <span className="text-right">Hit</span>
+                  <span className="text-right">Avg move</span>
+                </div>
+                {SIGNALS.map((sig, i) => {
+                  const active = row[sig.key];
+                  const own = backtests.stock.find((b) => b.kind === sig.kind);
+                  const sec = backtests.sector.find((b) => b.kind === sig.kind);
+                  const use: SignalStats | undefined = own && own.windows[1].samples >= 8 ? own : sec ?? own;
+                  return (
+                    <div key={sig.key} className={clsx(!active && "opacity-60")}>
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="label flex items-center gap-2 text-[11px] text-ink">
+                          <span className={clsx("inline-block size-1.5 rotate-45", active ? "bg-amber" : "bg-line")} />
+                          {sig.label}
+                          <span className={active ? "text-amber" : "text-steel"}>{active ? "active" : "not active"}</span>
+                        </span>
+                        {use && (
+                          <span className="num whitespace-nowrap text-[10px] text-steel">
+                            {use.scope === "stock" ? "this stock" : `sector: ${use.scopeKey}`.slice(0, 26)} / n = {use.windows[1].samples}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mb-2 pl-3.5 text-[11.5px] leading-snug text-steel">
+                        {sig.rule} {sig.kind === "Breakdown" ? "Hit = price lower afterwards." : "Hit = price higher afterwards."}
+                      </p>
+                      {use ? (
+                        <HitRateBars windows={use.windows} delay={seq.charts + i * 0.12} />
+                      ) : (
+                        <p className="num pl-3.5 text-[10px] uppercase tracking-wider text-steel">No backtest stored yet</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <Card index={7} className="col-span-12 xl:col-span-4" title="Behind the scores" right={<Freshness mode="text" label={row.fundamentalsAt ? `Results checked ${fmtIST(row.fundamentalsAt)}` : "Results not fetched"} />}>
+              <div className="flex flex-col gap-4">
+                <ReasonList title={`Technical${row.tech != null ? ` / ${row.tech}` : ""}`} items={row.techReasons} start={0} />
+                <ReasonList title={`Event${row.event != null ? ` / ${row.event}` : ""}`} items={row.eventReasons} start={5} empty="Results have not been fetched for this stock yet." />
+              </div>
             </Card>
 
             <Results row={row} quarters={quarters} upcoming={upcoming} daysToResult={daysToResult} />

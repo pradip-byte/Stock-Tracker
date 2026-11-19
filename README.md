@@ -12,8 +12,8 @@ Stack: Next.js (App Router, TypeScript), Tailwind, Motion, lightweight-charts, S
 | 0 | Design system, dashboard and stock pages | Done |
 | 1 | Schema, provider, backfill, jobs, technical signals and score | Done |
 | 2 | Result dates, quarterly results, fundamentals, event score | Done (Yahoo only, see limits below) |
-| 3 | Verdicts, reward/risk, backtest | Not started |
-| 4 | External signals via Claude | Not started |
+| 3 | Verdicts, reward/risk, 10-year signal backtest | Done |
+| 4 | External signals via Claude, including confirmed result dates | Not started |
 
 Panels that depend on a later phase say so on screen instead of showing invented numbers.
 
@@ -29,6 +29,7 @@ npm run seed                   # Nifty 200 + Nifty 50 / India VIX rows + your al
 npm run auth:set-password      # create your sign-in account (hidden prompt)
 npm run backfill               # 10 years of daily candles per stock, ~5 seconds each
 npm run fundamentals           # result dates, quarterly results, ratios, event scores
+npm run backtest               # 10-year signal backtest, then refreshes every verdict
 npm run dev                    # http://localhost:3000
 ```
 
@@ -55,6 +56,7 @@ npm run dev                    # http://localhost:3000
 | `npm run auth:set-password` | Creates the account for `ALLOWED_EMAIL` or resets its password |
 | `npm run backfill` | Backfills every stock that is not done yet. Resumable: stop it and run again. `-- --symbol TCS`, `-- --force`, `-- --years 5` |
 | `npm run fundamentals` | Refreshes results and fundamentals for stocks not updated in the last 20 hours. `-- --force` for all |
+| `npm run backtest` | Backtests every signal on each stock's full history, pools by sector and overall, refreshes verdicts. `-- --force` for all |
 | `npm run typecheck` | Type-checks from scratch (no incremental cache, which can hide errors) |
 
 To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file from
@@ -81,6 +83,7 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
     Works in 45-second batches and resumes on the next call.
   - `GET /api/cron/fundamentals`: daily refresh of result dates, quarterly results, ratios and event scores,
     also in 45-second batches.
+  - `GET /api/cron/backtest`: weekly signal backtest, in 45-second batches.
   - All require the `x-cron-secret` header. Provider calls retry three times with backoff; a symbol that
     still fails is recorded and the job carries on.
 - **Results and the event score** (`src/lib/events.ts`). For each stock: next result date, recent quarters
@@ -95,6 +98,30 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
     Dates Yahoo marks as estimates are labelled "est.".
   - NSE/BSE announcement feeds are **not** wired in: their result endpoints are not open APIs.
     `MarketDataProvider.getEarnings` is the single place to add an exchange or licensed source.
+  - Quarters whose revenue or profit is far out of line with the company's other quarters (for example an
+    annual figure in a quarterly slot) are flagged **"check data"**, drawn with a dashed outline, and left
+    out of growth figures and the event score.
+  - Quarter labels follow each company's own financial year end (from Yahoo): "Q2 FY27" for April-March
+    companies, "Q3 CY26" for calendar-year ones.
+  - `fundamentals.confirmed_result_date` / `confirmed_result_url` are reserved for the Phase 4 AI job. A
+    confirmed future date takes precedence over Yahoo's estimate everywhere (the `stock_latest` view does this).
+- **Backtest** (`src/lib/backtest.ts`). For every stock, each signal is replayed over the full history using
+  only data available on the day. An event is the first day a signal switches on. For each event the close
+  5, 20 and 60 sessions later is compared with the close on the signal day. A hit is a higher price for
+  bounce-back and trend, a lower price for a breakdown warning. Every result is stored next to a **baseline**
+  (the same measure for any day in the same history) so a signal can be judged against doing nothing special.
+  Returns are close-to-close with no costs, taxes or slippage. Results are stored per stock, per sector and
+  for all stocks; a stock with fewer than 8 past cases falls back to its sector, then to all stocks.
+- **Verdicts** (`src/lib/verdict.ts`). Short term (days to weeks) and long term (1 year+), each starting at 50:
+  - *Short:* technical score, reward-to-risk (target = nearest resistance, stop = nearest support less half an
+    ATR), the measured 20-session odds of the active signal against its baseline, and a result due within 7 days.
+    An active breakdown warning caps it at Avoid.
+  - *Long:* price and 50 DMA against the 200 DMA, event score, ROE, debt/equity (ignored for financials),
+    P/E, one-year return, and the external score once Phase 4 exists.
+  - 65+ Favourable, 45-64 Neutral, under 45 Avoid. The 3-5 largest factors are stored as the reasons.
+  - *Overall score:* weighted mean of the scores that exist (technical 0.45, event 0.30, external 0.25).
+  - *Risk:* from ATR as a share of price, raised one level when a result is within 7 days and set to High on
+    a breakdown warning.
 - **Freshness.** Every panel carries a stamp. Quotes older than 20 minutes in market hours, or data from
   before the latest expected session, are flagged "Stale" in amber. Exchange holidays are not known to the
   app, so data is flagged stale on a holiday rather than presented as current.
@@ -108,7 +135,7 @@ Vercel Hobby cron runs once a day at most, so Supabase calls the routes instead.
 3. Paste it into the Supabase SQL editor and run it. Do not commit the filled-in copy.
 
 The file schedules quotes every 15 minutes in market hours, the EOD batches after the close, the daily
-results and fundamentals refresh, and a daily clean-up of old `job_runs` rows. It also lists the queries to inspect scheduled jobs and recent HTTP responses.
+results and fundamentals refresh, the weekly backtest, and a daily clean-up of old `job_runs` rows. It also lists the queries to inspect scheduled jobs and recent HTTP responses.
 
 ## Deploying on Vercel (GitHub auto-deploy)
 

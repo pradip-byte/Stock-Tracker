@@ -11,7 +11,8 @@
     "seed": "tsx scripts/seed.ts",
     "backfill": "tsx scripts/backfill.ts",
     "auth:set-password": "tsx scripts/set-password.ts",
-    "fundamentals": "tsx scripts/fundamentals.ts"
+    "fundamentals": "tsx scripts/fundamentals.ts",
+    "backtest": "tsx scripts/backtest.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

@@ -16,6 +16,7 @@ export type ProviderFundamentals = {
   roe: number | null; // percent
   debtToEquity: number | null; // ratio (x)
   profitMargin: number | null; // percent
+  fiscalYearEndMonth: number | null; // 1-12
   sector: string | null;
   industry: string | null;
 };

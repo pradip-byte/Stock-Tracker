@@ -2,7 +2,19 @@
 import { analyseQuarters } from "./events";
 import { todayIST } from "./market";
 import { userDb } from "./supabase/server";
-import { INDEX_SYMBOLS, type Candle, type DashboardData, type JobRun, type Quotes, type StockDetail, type StockRow } from "./types";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  INDEX_SYMBOLS,
+  type BacktestWindow,
+  type Candle,
+  type DashboardData,
+  type JobRun,
+  type Quotes,
+  type SignalKind,
+  type SignalStats,
+  type StockDetail,
+  type StockRow,
+} from "./types";
 
 const n = (v: unknown): number | null => (v == null ? null : Number(v));
 const arr = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number) : []);
@@ -55,11 +67,51 @@ function mapRow(r: any): StockRow {
     debtToEquity: n(r.debt_to_equity),
     profitMargin: n(r.profit_margin),
     fundamentalsAt: r.fundamentals_at,
+    fiscalYearEndMonth: n(r.fiscal_year_end_month),
+    nextResultUrl: r.next_result_url ?? null,
     external: n(r.external),
     overall: n(r.overall),
     shortVerdict: r.short_verdict,
     longVerdict: r.long_verdict,
+    shortScore: n(r.verdict_reasons?.shortScore),
+    longScore: n(r.verdict_reasons?.longScore),
+    shortReasons: Array.isArray(r.verdict_reasons?.short) ? r.verdict_reasons.short : [],
+    longReasons: Array.isArray(r.verdict_reasons?.long) ? r.verdict_reasons.long : [],
+    odds: r.verdict_reasons?.odds ?? null,
   };
+}
+
+const KINDS: SignalKind[] = ["Bounce", "Trend", "Breakdown"];
+
+/** Backtest rows for one scope, shaped per signal with the any-day baseline alongside. */
+async function getBacktests(db: SupabaseClient, scope: "stock" | "sector" | "all", key: string | null): Promise<SignalStats[]> {
+  if (!key) return [];
+  const { data } = await db
+    .from("signal_backtests")
+    .select("signal,horizon_days,samples,hit_rate,avg_return")
+    .eq("scope", scope)
+    .eq("scope_key", key)
+    .limit(50);
+  const rows = data ?? [];
+  if (!rows.length) return [];
+  const base = (d: number) => n(rows.find((r) => r.signal === "Baseline" && r.horizon_days === d)?.hit_rate);
+  return KINDS.map((kind) => ({
+    kind,
+    scope,
+    scopeKey: key,
+    windows: ([5, 20, 60] as const).map((days): BacktestWindow => {
+      const r = rows.find((x) => x.signal === kind && x.horizon_days === days);
+      const b = base(days);
+      return {
+        days,
+        samples: r?.samples ?? 0,
+        hitRate: n(r?.hit_rate),
+        avgReturn: n(r?.avg_return),
+        // for a breakdown warning a "hit" is a lower price, so compare with how often any day was followed by one
+        baseline: b == null ? null : kind === "Breakdown" ? Math.round((100 - b) * 10) / 10 : b,
+      };
+    }),
+  }));
 }
 
 export async function getRows(): Promise<StockRow[]> {
@@ -81,19 +133,27 @@ export async function getQuotes(): Promise<Quotes> {
 
 export async function getDashboard(): Promise<DashboardData> {
   const db = await userDb();
-  const [all, nifty] = await Promise.all([
+  const [all, nifty, signalBoard] = await Promise.all([
     getRows(),
     db.from("candles_daily").select("date,close").eq("symbol", INDEX_SYMBOLS[0]).order("date", { ascending: false }).limit(120),
+    getBacktests(db, "all", "ALL"),
   ]);
   const ready = all.filter((r) => r.backfillStatus === "done" && r.tech != null);
   const byTech = (a: StockRow, b: StockRow) => (b.tech ?? 0) - (a.tech ?? 0);
 
-  const shortSetups = ready.filter((r) => r.bounce || r.trend).sort((a, b) => Number(b.bounce) - Number(a.bounce) || byTech(a, b)).slice(0, 10);
-  // Until the Phase 3 verdict exists: an intact uptrend plus a scored results record, ranked on both
-  const blend = (r: StockRow) => (r.tech ?? 0) * 0.5 + (r.event ?? 0) * 0.5;
+  const rank = { Favourable: 2, Neutral: 1, Avoid: 0 } as const;
+  const shortSetups = ready
+    .filter((r) => (r.bounce || r.trend) && !r.breakdown)
+    .sort(
+      (a, b) =>
+        (rank[b.shortVerdict ?? "Avoid"] - rank[a.shortVerdict ?? "Avoid"]) ||
+        (b.shortScore ?? 0) - (a.shortScore ?? 0) ||
+        byTech(a, b),
+    )
+    .slice(0, 10);
   const longCandidates = ready
-    .filter((r) => r.trend && !r.breakdown && r.event != null)
-    .sort((a, b) => blend(b) - blend(a))
+    .filter((r) => r.longVerdict === "Favourable")
+    .sort((a, b) => (b.longScore ?? 0) - (a.longScore ?? 0))
     .slice(0, 6);
   const today = todayIST();
   const horizon = new Date(`${today}T00:00:00Z`);
@@ -119,6 +179,7 @@ export async function getDashboard(): Promise<DashboardData> {
     today,
     fundamentalsAt,
     results,
+    signalBoard,
     resultsUnknown: ready.filter((r) => !r.nextResultDate || r.nextResultDate < today).length,
     resultsLater: ready
       .filter((r) => r.nextResultDate && r.nextResultDate > until)
@@ -179,8 +240,10 @@ export async function getStockDetail(symbol: string): Promise<StockDetail | null
       reaction1d: n(q.reaction_1d),
       reaction5d: n(q.reaction_5d),
     })),
+    n(r.fiscal_year_end_month),
   ).slice(-8);
-  return { row: mapRow(r), candles, quarters, today: todayIST() };
+  const [stock, sector] = await Promise.all([getBacktests(db, "stock", symbol), getBacktests(db, "sector", r.sector)]);
+  return { row: mapRow(r), candles, quarters, today: todayIST(), backtests: { stock, sector } };
 }
 
 export async function getJobRuns(limit = 60): Promise<JobRun[]> {

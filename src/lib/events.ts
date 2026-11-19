@@ -20,13 +20,51 @@ export type RawQuarter = {
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const CRORE = 1e7;
 
-/** Indian fiscal year runs April to March: the quarter ending 30 Sep 2026 is Q2 FY27. */
-export function fiscalLabel(periodEnd: string): string {
+/**
+ * Quarter label for a company whose financial year ends in `fyEndMonth`.
+ * April-March (the Indian default): the quarter ending 30 Sep 2026 is "Q2 FY27".
+ * Calendar-year companies (year ends in December): the same quarter is "Q3 CY26".
+ */
+export function fiscalLabel(periodEnd: string, fyEndMonth: number | null = 3): string {
+  const end = fyEndMonth && fyEndMonth >= 1 && fyEndMonth <= 12 ? fyEndMonth : 3;
   const y = +periodEnd.slice(0, 4);
   const m = +periodEnd.slice(5, 7);
-  const q = m <= 3 ? 4 : m <= 6 ? 1 : m <= 9 ? 2 : 3;
-  const fy = m <= 3 ? y : y + 1;
-  return `Q${q} FY${String(fy).slice(2)}`;
+  const monthsIn = (m - end + 11) % 12; // 0-11 months into the financial year
+  const q = Math.floor(monthsIn / 3) + 1;
+  const fy = m <= end ? y : y + 1;
+  return `Q${q} ${end === 12 ? "CY" : "FY"}${String(fy).slice(2)}`;
+}
+
+const median = (xs: number[]) => {
+  const a = [...xs].sort((x, y) => x - y);
+  return a.length % 2 ? a[a.length >> 1] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2;
+};
+
+/**
+ * Flags quarters whose figures are out of line with the company's other quarters,
+ * for example an annual figure sitting in a quarterly slot. Needs at least three
+ * other quarters to compare against. A flag means "check the data", not "wrong":
+ * a genuine one-off gain would be flagged too.
+ */
+export function suspectReasons(raw: RawQuarter[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const q of raw) {
+    const others = raw.filter((o) => o !== q);
+    const revs = others.map((o) => o.revenue).filter((v): v is number => v != null && v > 0);
+    const profits = others.map((o) => o.netProfit).filter((v): v is number => v != null).map(Math.abs).filter((v) => v > 0);
+    if (q.revenue != null && q.revenue > 0 && revs.length >= 3) {
+      const ratio = q.revenue / median(revs);
+      if (ratio > 2.5 || ratio < 0.4) {
+        out.set(q.periodEnd, `revenue is ${ratio.toFixed(1)}x this company's typical quarter`);
+        continue;
+      }
+    }
+    if (q.netProfit != null && profits.length >= 3) {
+      const ratio = Math.abs(q.netProfit) / median(profits);
+      if (ratio > 3) out.set(q.periodEnd, `net profit is ${ratio.toFixed(1)}x this company's typical quarter`);
+    }
+  }
+  return out;
 }
 
 function shiftMonths(periodEnd: string, months: number): string {
@@ -39,16 +77,22 @@ function shiftMonths(periodEnd: string, months: number): string {
 const growth = (now: number | null, then: number | null): number | null =>
   now == null || then == null || then <= 0 ? null : r1((now / then - 1) * 100);
 
-/** Adds YoY and QoQ growth and net margin. Growth needs the exact comparison quarter to be present. */
-export function analyseQuarters(raw: RawQuarter[]): Quarter[] {
+/**
+ * Adds labels, YoY and QoQ growth and net margin. Growth needs the exact comparison
+ * quarter to be present, and is not computed from or against a quarter flagged "check data".
+ */
+export function analyseQuarters(raw: RawQuarter[], fyEndMonth: number | null = 3): Quarter[] {
   const sorted = [...raw].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
-  const byMonth = new Map(sorted.map((q) => [q.periodEnd.slice(0, 7), q]));
+  const suspect = suspectReasons(sorted);
+  const byMonth = new Map(sorted.filter((q) => !suspect.has(q.periodEnd)).map((q) => [q.periodEnd.slice(0, 7), q]));
   return sorted.map((q) => {
-    const yearAgo = byMonth.get(shiftMonths(q.periodEnd, -12));
-    const prev = byMonth.get(shiftMonths(q.periodEnd, -3));
+    const flagged = suspect.get(q.periodEnd) ?? null;
+    const yearAgo = flagged ? undefined : byMonth.get(shiftMonths(q.periodEnd, -12));
+    const prev = flagged ? undefined : byMonth.get(shiftMonths(q.periodEnd, -3));
     return {
       periodEnd: q.periodEnd,
-      label: fiscalLabel(q.periodEnd),
+      label: fiscalLabel(q.periodEnd, fyEndMonth),
+      checkData: flagged,
       revenue: q.revenue == null ? null : q.revenue / CRORE,
       profit: q.netProfit == null ? null : q.netProfit / CRORE,
       margin: q.revenue && q.netProfit != null ? r1((q.netProfit / q.revenue) * 100) : null,
@@ -82,10 +126,12 @@ export function postResultReaction(candles: Candle[], reportedAt: string): { d1:
 
 /** 0-100 event score from the growth trend and how the stock has reacted to past results. */
 export function eventScore(quarters: Quarter[]): { score: number | null; reasons: string[] } {
-  const usable = quarters.filter((q) => q.revenue != null && q.profit != null);
+  // quarters flagged "check data" are left out entirely
+  const usable = quarters.filter((q) => q.revenue != null && q.profit != null && !q.checkData);
   if (usable.length < 2) {
-    return { score: null, reasons: ["Not enough quarterly results from the data provider to score this stock."] };
+    return { score: null, reasons: ["Not enough reliable quarterly results from the data provider to score this stock."] };
   }
+  const excluded = quarters.filter((q) => q.checkData);
   const f: { pts: number; text: string }[] = [];
   const add = (pts: number, text: string) => f.push({ pts, text });
   const last = usable[usable.length - 1];
@@ -134,7 +180,10 @@ export function eventScore(quarters: Quarter[]): { score: number | null; reasons
   const score = Math.round(Math.min(100, Math.max(0, 50 + f.reduce((a, b) => a + b.pts, 0))));
   const reasons = f
     .sort((a, b) => Math.abs(b.pts) - Math.abs(a.pts))
-    .slice(0, 5)
+    .slice(0, excluded.length ? 4 : 5)
     .map((x) => x.text);
+  if (excluded.length) {
+    reasons.push(`${excluded.map((q) => q.label).join(", ")} left out of this score: the figures look out of line and need checking.`);
+  }
   return { score, reasons };
 }

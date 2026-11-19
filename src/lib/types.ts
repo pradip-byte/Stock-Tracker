@@ -65,11 +65,18 @@ export type StockRow = {
   debtToEquity: number | null;
   profitMargin: number | null;
   fundamentalsAt: string | null;
+  fiscalYearEndMonth: number | null;
+  nextResultUrl: string | null;
   // Filled by later phases
   external: number | null;
   overall: number | null;
   shortVerdict: Verdict | null;
   longVerdict: Verdict | null;
+  shortScore: number | null;
+  longScore: number | null;
+  shortReasons: string[];
+  longReasons: string[];
+  odds: SignalOdds | null;
 };
 
 export type SectorGroup = { sector: string; symbols: string[] };
@@ -84,6 +91,8 @@ export type DashboardData = {
   resultsUnknown: number;
   /** Nearest known result dates beyond the 30-day window. */
   resultsLater: { symbol: string; date: string; estimate: boolean }[];
+  /** Backtest pooled across every tracked stock. */
+  signalBoard: SignalStats[];
   shortSetups: string[];
   longCandidates: string[];
   highRisk: string[];
@@ -91,7 +100,14 @@ export type DashboardData = {
   counts: { tracked: number; pending: number; bounce: number; trend: number; breakdown: number };
 };
 
-export type StockDetail = { row: StockRow; candles: Candle[]; quarters: Quarter[]; today: string };
+export type StockDetail = {
+  row: StockRow;
+  candles: Candle[];
+  quarters: Quarter[];
+  today: string;
+  /** Backtests for this stock and, as a fallback for thin samples, its sector. */
+  backtests: { stock: SignalStats[]; sector: SignalStats[] };
+};
 
 export type JobRun = {
   id: number;
@@ -109,6 +125,8 @@ export type JobRun = {
 export type Quarter = {
   periodEnd: string;
   label: string; // e.g. "Q2 FY27"
+  /** Set when the figures look out of line with the company's other quarters. Excluded from the event score. */
+  checkData: string | null;
   revenue: number | null;
   profit: number | null;
   margin: number | null;
@@ -123,4 +141,24 @@ export type Quarter = {
 };
 
 /** Backtest result for one holding period (Phase 3). */
-export type BacktestWindow = { days: 5 | 20 | 60; hitRate: number; avgReturn: number };
+export type BacktestWindow = {
+  days: 5 | 20 | 60;
+  samples: number;
+  /** Percent of past cases that went the signal's way (up for bounce/trend, down for breakdown). */
+  hitRate: number | null;
+  avgReturn: number | null;
+  /** The same measure for any day in the same history, for comparison. */
+  baseline: number | null;
+};
+
+export type SignalStats = { kind: SignalKind; scope: "stock" | "sector" | "all"; scopeKey: string; windows: BacktestWindow[] };
+
+/** Measured 20-session odds of the signal that is active now. */
+export type SignalOdds = {
+  signal: SignalKind;
+  hitRate: number;
+  avgReturn: number;
+  samples: number;
+  scope: "stock" | "sector" | "all";
+  baseline: number | null;
+};

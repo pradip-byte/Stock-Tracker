@@ -6,7 +6,7 @@ import Link from "next/link";
 import { changePct, inr, pct, toneOf } from "@/lib/format";
 import { fmtIST } from "@/lib/market";
 import { INDEX_SYMBOLS, type DashboardData, type StockRow } from "@/lib/types";
-import { LineReveal, RangeSlider, Sparkline } from "../charts/primitives";
+import { HitRateBars, LineReveal, RangeSlider, Sparkline } from "../charts/primitives";
 import { ResultsTimeline } from "../charts/ResultsTimeline";
 import { SectorHeatmap } from "../charts/SectorHeatmap";
 import { Odometer } from "../motion/Odometer";
@@ -14,7 +14,7 @@ import { Rise, TypeIn } from "../motion/primitives";
 import { dur, ease, seq } from "../motion/tokens";
 import { useQuote, useQuotes } from "../shell/quotes";
 import { StockLink, SymbolMark } from "../shell/StockLink";
-import { Card, Pending, SignalTag, Stat } from "../ui/core";
+import { Card, SignalTag, Stat, VerdictTag } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 
 const isIndex = (s: string) => (INDEX_SYMBOLS as readonly string[]).includes(s);
@@ -191,7 +191,7 @@ function Pulse({ data }: { data: DashboardData }) {
 /* ───────────────────────── Short-term setups ───────────────────────── */
 
 const COLS =
-  "grid grid-cols-[minmax(160px,1.6fr)_100px_96px_72px_44px_minmax(92px,.7fr)_60px_48px_minmax(100px,.9fr)_64px] items-center gap-3";
+  "grid grid-cols-[minmax(160px,1.6fr)_100px_96px_72px_44px_minmax(92px,.7fr)_60px_48px_minmax(100px,.9fr)_88px] items-center gap-3";
 
 function ScoreBar({ value, delay }: { value: number; delay: number }) {
   return (
@@ -212,6 +212,7 @@ function ScoreBar({ value, delay }: { value: number; delay: number }) {
 
 function SetupRow({ r, i }: { r: StockRow; i: number }) {
   const d = seq.charts + i * 0.05;
+  const odds = r.odds && r.odds.samples >= 8 ? r.odds : null;
   return (
     <Rise index={4 + i * 0.5}>
       <StockLink
@@ -230,12 +231,15 @@ function SetupRow({ r, i }: { r: StockRow; i: number }) {
           {r.rsi?.toFixed(0) ?? "—"}
         </span>
         <SignalTag kind={r.signal} />
-        <span className="num justify-self-end text-[12px] text-steel" title="Measured hit rates arrive with the Phase 3 backtest">
-          —
+        <span
+          className={clsx("num justify-self-end text-[12px]", odds ? "text-ink" : "text-steel")}
+          title={odds ? `${odds.samples} past cases on ${odds.scope === "stock" ? "this stock" : odds.scope === "sector" ? "its sector" : "all tracked stocks"}${odds.baseline != null ? `; any-day baseline ${odds.baseline.toFixed(0)}%` : ""}` : "Too few past cases to measure"}
+        >
+          {odds ? `${odds.hitRate.toFixed(0)}%` : "—"}
         </span>
         <span className="num justify-self-end text-[12px] text-ink">{r.rr != null ? `${r.rr.toFixed(1)}x` : "—"}</span>
         {r.tech != null ? <ScoreBar value={r.tech} delay={d} /> : dash}
-        <span className="num justify-self-end text-[11px] text-steel">{r.risk ?? "—"}</span>
+        <span className="justify-self-end">{r.shortVerdict ? <VerdictTag verdict={r.shortVerdict} /> : dash}</span>
       </StockLink>
     </Rise>
   );
@@ -250,7 +254,7 @@ function Setups({ data }: { data: DashboardData }) {
       right={<Freshness mode="eod" at={data.eodDate} />}
       bodyClassName="overflow-x-auto"
     >
-      <div className="min-w-[972px]">
+      <div className="min-w-[996px]">
         <div className={clsx(COLS, "label h-8 border-b border-line px-3.5 text-[10px] text-steel")}>
           <span>Stock</span>
           <span>30 sessions</span>
@@ -261,7 +265,7 @@ function Setups({ data }: { data: DashboardData }) {
           <span className="justify-self-end">Hit 20D</span>
           <span className="justify-self-end">R:R</span>
           <span>Tech score</span>
-          <span className="justify-self-end">Risk</span>
+          <span className="justify-self-end">Verdict</span>
         </div>
         {data.shortSetups.map((s, i) => (
           <SetupRow key={s} r={data.rows[s]} i={i} />
@@ -282,7 +286,7 @@ function LongTerm({ data }: { data: DashboardData }) {
       index={4}
       className="col-span-12 md:col-span-6 xl:col-span-4"
       title="Long-term candidates"
-      right={<Freshness mode="text" label="Uptrend + results record" />}
+      right={<Freshness mode="eod" at={data.eodDate} />}
       bodyClassName=""
     >
       {data.longCandidates.map((s, i) => {
@@ -303,20 +307,14 @@ function LongTerm({ data }: { data: DashboardData }) {
                 </span>
               )}
             </span>
-            <span className="num text-right text-[10px] uppercase leading-relaxed tracking-wider text-steel">
-              {r.distHi52 != null && (
-                <>
-                  <span className="text-ink">{Math.abs(r.distHi52).toFixed(1)}%</span> off high
-                </>
-              )}
-            </span>
+            {r.longVerdict && <VerdictTag verdict={r.longVerdict} />}
             <span className="flex gap-3 text-right">
               <span className="w-10">
-                <span className="display block text-3xl">{r.tech ?? "—"}</span>
-                <span className="label text-[9px] text-steel">Tech</span>
+                <span className="display block text-3xl text-amber">{r.longScore ?? "—"}</span>
+                <span className="label text-[9px] text-steel">Long</span>
               </span>
               <span className="w-10">
-                <span className="display block text-3xl text-amber">{r.event ?? "—"}</span>
+                <span className="display block text-3xl">{r.event ?? "—"}</span>
                 <span className="label text-[9px] text-steel">Event</span>
               </span>
             </span>
@@ -324,7 +322,7 @@ function LongTerm({ data }: { data: DashboardData }) {
         );
       })}
       {data.longCandidates.length === 0 && (
-        <p className="p-4 text-[12.5px] text-steel">No stock currently combines an intact uptrend with a scored results record.</p>
+        <p className="p-4 text-[12.5px] text-steel">No stock currently has a favourable long-term verdict.</p>
       )}
     </Card>
   );
@@ -385,7 +383,7 @@ function SignalsToday({ data }: { data: DashboardData }) {
     { label: "Breakdown warning", n: counts.breakdown },
   ];
   return (
-    <Card index={8} className="col-span-12 xl:col-span-4" title="Signals on the latest session" right={<Freshness mode="eod" at={data.eodDate} />}>
+    <Card index={8} className="col-span-12 xl:col-span-4" title="Signal scoreboard" right={<Freshness mode="eod" at={data.eodDate} />}>
       <div className="flex flex-col gap-3.5">
         {rows.map((r, i) => (
           <div key={r.label}>
@@ -406,7 +404,32 @@ function SignalsToday({ data }: { data: DashboardData }) {
             </div>
           </div>
         ))}
-        <Pending phase={3} what="Measured hit rates and average returns for each signal, from the 10-year backtest." className="min-h-0" />
+        <div className="border-t border-line pt-3">
+          <div className="num mb-2.5 grid grid-cols-[28px_1fr_38px_56px] gap-2 text-[9px] uppercase tracking-wider text-steel">
+            <span />
+            <span>10-year hit rate / marker = any day</span>
+            <span className="text-right">Hit</span>
+            <span className="text-right">Avg move</span>
+          </div>
+          {data.signalBoard.length === 0 && (
+            <p className="text-[12.5px] text-steel">
+              No backtest yet. Run <span className="num text-ink">npm run backtest</span>.
+            </p>
+          )}
+          <div className="flex flex-col gap-3.5">
+            {data.signalBoard.map((s, i) => (
+              <div key={s.kind}>
+                <div className="mb-1.5 flex items-baseline justify-between">
+                  <span className="label text-[11px] text-ink">
+                    {s.kind === "Bounce" ? "Bounce-back: higher after" : s.kind === "Trend" ? "Trend start: higher after" : "Breakdown: lower after"}
+                  </span>
+                  <span className="num text-[10px] text-steel">n = {s.windows[1].samples.toLocaleString("en-IN")}</span>
+                </div>
+                <HitRateBars windows={s.windows} delay={seq.charts + 0.2 + i * 0.12} />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </Card>
   );

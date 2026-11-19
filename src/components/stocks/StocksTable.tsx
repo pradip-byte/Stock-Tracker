@@ -8,12 +8,12 @@ import type { StockRow } from "@/lib/types";
 import { TypeIn } from "../motion/primitives";
 import { useQuote } from "../shell/quotes";
 import { StockLink, SymbolMark } from "../shell/StockLink";
-import { Card, SignalTag } from "../ui/core";
+import { Card, SignalTag, VerdictTag } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 import { Segmented } from "../ui/Segmented";
 
 const COLS =
-  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_100px_70px] items-center gap-3 px-3.5";
+  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_92px_92px_100px] items-center gap-3 px-3.5";
 const FILTERS = ["All", "Watchlist", "Signals", "Results in 30D", "Added by me"] as const;
 type SortKey = "symbol" | "tech" | "chg" | "event";
 
@@ -55,17 +55,20 @@ function Row({ r, today }: { r: StockRow; today: string }) {
       <span className="num justify-self-end text-[12px] text-ink">{r.tech ?? "—"}</span>
       <span className="num justify-self-end text-[12px] text-ink">{r.event ?? "—"}</span>
       <span className="num justify-self-end text-[12px] text-ink">{r.rr != null ? `${r.rr.toFixed(1)}x` : "—"}</span>
+      <span className="justify-self-end">
+        {r.backfillStatus !== "done" ? (
+          <span className="num text-[10px] uppercase tracking-wider text-amber" title={r.backfillError ?? undefined}>
+            {r.backfillStatus}
+          </span>
+        ) : r.shortVerdict ? (
+          <VerdictTag verdict={r.shortVerdict} />
+        ) : (
+          <span className="num text-steel">—</span>
+        )}
+      </span>
+      <span className="justify-self-end">{r.longVerdict ? <VerdictTag verdict={r.longVerdict} /> : <span className="num text-steel">—</span>}</span>
       <span className={clsx("num justify-self-end text-[11px]", soon ? "text-amber" : "text-steel")}>
         {upcoming ? `${shortDate(r.nextResultDate!)}${r.nextResultEstimate ? " est." : ""}` : "unknown"}
-      </span>
-      <span
-        className={clsx(
-          "num justify-self-end text-[10px] uppercase tracking-wider",
-          r.backfillStatus === "done" ? "text-steel" : "text-amber",
-        )}
-        title={r.backfillError ?? undefined}
-      >
-        {r.backfillStatus === "done" ? "ready" : r.backfillStatus}
       </span>
     </div>
   );
@@ -132,7 +135,7 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
         right={<Freshness mode="eod" at={eodDate} />}
         bodyClassName="overflow-x-auto"
       >
-        <div className="min-w-[1180px]">
+        <div className="min-w-[1300px]">
           <div className={clsx(COLS, "label h-8 border-b border-line text-[10px] text-steel")}>
             <span />
             {head("Stock", "symbol", false)}
@@ -144,8 +147,9 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
             {head("Tech", "tech")}
             {head("Event", "event")}
             {head("R:R")}
+            {head("Short term")}
+            {head("Long term")}
             {head("Next result")}
-            {head("Data")}
           </div>
           {shown.map((r) => (
             <Row key={r.symbol} r={r} today={today} />
