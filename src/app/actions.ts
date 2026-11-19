@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { addStock, refreshQuotes, runEod, type JobResult } from "@/lib/jobs/core";
+import { researchStock } from "@/lib/jobs/external";
 import { adminDb } from "@/lib/supabase/admin";
 import { allowedEmail, requireUser, userDb } from "@/lib/supabase/server";
 
@@ -49,6 +50,14 @@ export async function setWatchlistAction(symbol: string, value: boolean): Promis
 export async function runJobAction(job: "quotes" | "eod"): Promise<JobResult> {
   await requireUser();
   const res = job === "quotes" ? await refreshQuotes({ force: true }) : await runEod({ force: true, budgetMs: 40000 });
+  revalidatePath("/", "layout");
+  return res;
+}
+
+/** Per-stock "Refresh" of the AI read. Ignores the weekly skip rule; reuses this week's sector note. */
+export async function refreshExternalAction(symbol: string): Promise<{ ok: boolean; error?: string; score?: number; costUsd?: number }> {
+  await requireUser();
+  const res = await researchStock(symbol, "manual");
   revalidatePath("/", "layout");
   return res;
 }

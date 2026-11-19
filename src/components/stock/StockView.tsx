@@ -16,7 +16,8 @@ import { Rise, TypeIn } from "../motion/primitives";
 import { dur, ease, seq } from "../motion/tokens";
 import { useQuote } from "../shell/quotes";
 import { vtName } from "../shell/StockLink";
-import { Button, Card, Pending, Stat, VerdictStamp } from "../ui/core";
+import { ExternalCard } from "./ExternalCard";
+import { Button, Card, Stat, VerdictStamp } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 
 function RewardRisk({ price, stop, target }: { price: number; stop: number; target: number }) {
@@ -427,7 +428,14 @@ export function StockView({ detail }: { detail: StockDetail }) {
                           <span className="label text-[10px] text-steel/70">Event</span>
                         </div>
                       )}
-                      <EmptyGauge label="External" phase={4} />
+                      {detail.external?.score != null ? (
+                        <RadialGauge value={detail.external.score} label="External" size={92} delay={seq.charts + 0.14} />
+                      ) : (
+                        <div className="flex w-[92px] flex-col items-center justify-center gap-1 text-center">
+                          <span className="num text-[10px] text-steel">no AI read</span>
+                          <span className="label text-[10px] text-steel/70">External</span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex gap-3">
                       {row.overall != null ? (
@@ -525,9 +533,7 @@ export function StockView({ detail }: { detail: StockDetail }) {
 
             <Results row={row} quarters={quarters} upcoming={upcoming} daysToResult={daysToResult} />
 
-            <Card index={9} className="col-span-12" title="External read">
-              <Pending phase={4} what="News sentiment, guidance, expectations and key risks from the weekly AI run, with source links." className="min-h-0" />
-            </Card>
+            <ExternalCard symbol={row.symbol} read={detail.external} index={9} />
           </div>
         </>
       )}

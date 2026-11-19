@@ -121,9 +121,18 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
   // verdicts: combine the technical read with results, fundamentals and the measured signal odds
   const { data: ctx } = await db
     .from("stock_latest")
-    .select("sector,event,external,roe,debt_to_equity,pe,next_result_date,next_result_is_estimate")
+    .select("sector,event,roe,debt_to_equity,pe,next_result_date,next_result_is_estimate")
     .eq("symbol", symbol)
     .maybeSingle();
+  const { data: ext } = await db
+    .from("external_signals")
+    .select("score,run_at")
+    .eq("symbol", symbol)
+    .order("run_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  // an AI read older than 45 days no longer counts towards the verdict
+  const external = ext?.score != null && Date.now() - new Date(ext.run_at).getTime() < 45 * 86400000 ? Number(ext.score) : null;
   const active: SignalKind | null = last.sig_bounce ? "Bounce" : last.sig_breakdown ? "Breakdown" : last.sig_trend ? "Trend" : null;
   const odds = active ? await signalOdds(db, symbol, ctx?.sector ?? null, active) : null;
   const num = (x: unknown) => (x == null ? null : Number(x));
@@ -142,7 +151,7 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     distHi52: last.dist_hi52_pct,
     return1y: n > 251 ? (candles[n - 1].close / candles[n - 251].close - 1) * 100 : null,
     event: num(ctx?.event),
-    external: num(ctx?.external),
+    external,
     roe: num(ctx?.roe),
     debtToEquity: num(ctx?.debt_to_equity),
     pe: num(ctx?.pe),
@@ -159,7 +168,7 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
       technical: t.score,
       technical_reasons: t.reasons,
       event: num(ctx?.event),
-      external: num(ctx?.external),
+      external,
       overall: v.overall,
       short_verdict: v.shortVerdict,
       long_verdict: v.longVerdict,
@@ -513,6 +522,7 @@ export async function refreshFundamentalsFor(db: SupabaseClient, symbol: string,
       debt_to_equity: fund.debtToEquity,
       profit_margin: fund.profitMargin,
       fiscal_year_end_month: fund.fiscalYearEndMonth,
+      industry: fund.industry,
       event_score: ev.score,
       event_reasons: ev.reasons,
       error: null,

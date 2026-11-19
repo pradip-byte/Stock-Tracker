@@ -13,7 +13,7 @@ Stack: Next.js (App Router, TypeScript), Tailwind, Motion, lightweight-charts, S
 | 1 | Schema, provider, backfill, jobs, technical signals and score | Done |
 | 2 | Result dates, quarterly results, fundamentals, event score | Done (Yahoo only, see limits below) |
 | 3 | Verdicts, reward/risk, 10-year signal backtest | Done |
-| 4 | External signals via Claude, including confirmed result dates | Not started |
+| 4 | External signals via Claude, including confirmed result dates | Done |
 
 Panels that depend on a later phase say so on screen instead of showing invented numbers.
 
@@ -30,6 +30,7 @@ npm run auth:set-password      # create your sign-in account (hidden prompt)
 npm run backfill               # 10 years of daily candles per stock, ~5 seconds each
 npm run fundamentals           # result dates, quarterly results, ratios, event scores
 npm run backtest               # 10-year signal backtest, then refreshes every verdict
+npm run external -- --dry-run  # who the weekly AI read would cover, with no API calls
 npm run dev                    # http://localhost:3000
 ```
 
@@ -43,7 +44,9 @@ npm run dev                    # http://localhost:3000
 | `DATABASE_URL` | `npm run db:push` only | Postgres connection string with the real database password. URL-encode special characters in the password |
 | `CRON_SECRET` | cron routes | Long random string. Sent by pg_cron in the `x-cron-secret` header |
 | `ALLOWED_EMAIL` | sign-in, route guard, seed | The only email that can sign in |
-| `ANTHROPIC_API_KEY` | Phase 4 | Not used yet |
+| `EXTERNAL_SIGNALS_MODEL` | AI read (Phase 4) | Claude model for the AI read. Optional; defaults to `claude-haiku-5-5` |
+| `ANTHROPIC_WORKSPACE_ID` | AI read (Phase 4) | Only needed when the API key is not tied to a single workspace; Anthropic then requires the workspace ID on every request |
+| `ANTHROPIC_API_KEY` | AI read (Phase 4) | From console.anthropic.com. Without it the AI read is simply unavailable; everything else works |
 
 `.env.local` is git-ignored. Never commit secrets.
 
@@ -57,6 +60,7 @@ npm run dev                    # http://localhost:3000
 | `npm run backfill` | Backfills every stock that is not done yet. Resumable: stop it and run again. `-- --symbol TCS`, `-- --force`, `-- --years 5` |
 | `npm run fundamentals` | Refreshes results and fundamentals for stocks not updated in the last 20 hours. `-- --force` for all |
 | `npm run backtest` | Backtests every signal on each stock's full history, pools by sector and overall, refreshes verdicts. `-- --force` for all |
+| `npm run external` | Weekly AI read for everything that is due. `-- --dry-run` lists who would run and why (no API calls). `-- --symbol TCS` runs one stock |
 | `npm run typecheck` | Type-checks from scratch (no incremental cache, which can hide errors) |
 
 To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file from
@@ -84,6 +88,7 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   - `GET /api/cron/fundamentals`: daily refresh of result dates, quarterly results, ratios and event scores,
     also in 45-second batches.
   - `GET /api/cron/backtest`: weekly signal backtest, in 45-second batches.
+  - `GET /api/cron/external`: weekly AI read. This one spends money; see below.
   - All require the `x-cron-secret` header. Provider calls retry three times with backoff; a symbol that
     still fails is recorded and the job carries on.
 - **Results and the event score** (`src/lib/events.ts`). For each stock: next result date, recent quarters
@@ -122,6 +127,47 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   - *Overall score:* weighted mean of the scores that exist (technical 0.45, event 0.30, external 0.25).
   - *Risk:* from ATR as a share of price, raised one level when a result is within 7 days and set to High on
     a breakdown warning.
+- **External signals** (`src/lib/jobs/external.ts`, `src/lib/ai/`). Claude (`claude-haiku-5-5` by default; set `EXTERNAL_SIGNALS_MODEL` to change it) with the web
+  search tool reads company news, last-quarter guidance, expectations for the next result and the next result
+  date, and returns strict JSON (the input of a strict tool, so it always matches the schema).
+  - **Industry context is shared.** Outlook, export/import exposure, currency and commodity sensitivity and
+    industry risks are researched once a week per industry (`sector_research`) and attached to every stock in
+    it. The key is the data provider's industry ("Marine Shipping", "Credit Services"), not the exchange's
+    broad sector, so a ports company does not get a note about IT services. A stock call searches only for
+    company-specific items.
+  - **Search caps**, enforced by the API (`max_uses`): 2 web searches per stock call, 3 per industry call.
+    A stock whose result is within 30 days gets a third search, aimed at analyst expectations for that quarter.
+  - **Source rules.** The search tool is told never to return marketsmojo.com, scanx.trade, multibagg.ai,
+    ad-hoc-news.de or wikipedia.org (`BLOCKED_DOMAINS` in `src/lib/ai/research.ts`). The prompt asks for
+    exchange filings, company investor pages, Business Standard, Economic Times, Mint, Moneycontrol and
+    Reuters first; that preference is guidance to the model, not a hard filter. At most one news item is kept
+    per source page.
+  - **Risks need a dated source.** A company or industry risk is kept only when it links to a search result
+    dated within the last 90 days. Anything else is dropped, so the list can be empty.
+  - **Sources.** Every URL in the search results is stored with the run. A link in the answer is kept only
+    if it appeared in those results, so an invented URL cannot be saved. News items without a verified link
+    are dropped.
+  - **Confirmed result dates.** A date is treated as confirmed only when it comes from a company notice or
+    an NSE/BSE filing, has a verified link to a page the search engine dates within the last 90 days, and lies
+    in the next 150 days. It then overrides Yahoo's estimate. The provider's own date is not shown to the model,
+    because it tends to echo it back as "confirmed".
+    Dates from media reports are shown as "reported, not confirmed".
+  - **External score** (0-100, 50 neutral): news sentiment, guidance tone, expectations tone and the sector
+    outlook, pulled towards 50 in proportion to the read's confidence. It carries 25% of the overall score
+    and feeds the long-term verdict. A read older than 45 days stops counting.
+  - `npm run external -- --relink` attaches existing reads to industry notes without repeating the stock call.
+  - **Who gets a weekly read:** the watchlist plus the top 30 by technical score. A stock is **skipped** when
+    it has no result within 30 days, its price moved less than 5% over the last five sessions, and its last
+    read is under 3 weeks old. The "Refresh" button on a stock page ignores the skip rule.
+  - **Cost log.** Every call is written to `ai_runs` with searches, tokens, duration and an estimated cost
+    (the model's published token prices plus $10 per 1,000 searches). The admin page shows this month, last
+    month and each call. It is an estimate; the Anthropic Console has the actual bill. On `claude-haiku-5-5`
+    a stock call has measured about 25-30K tokens in, 3K out and 2 searches, roughly $0.024, and an industry
+    note about $0.036; search fees ($10 per 1,000) are most of that.
+  - Not used, on purpose: the Batch API and prompt caching.
+  - A request the model declines is logged as "refused". Haiku 5.5 has no automatic fallback model; if
+    `EXTERNAL_SIGNALS_MODEL` is set to Sonnet 5.5, the API retries a declined request once on its default
+    fallback (`fallbacks: "default"`).
 - **Freshness.** Every panel carries a stamp. Quotes older than 20 minutes in market hours, or data from
   before the latest expected session, are flagged "Stale" in amber. Exchange holidays are not known to the
   app, so data is flagged stale on a holiday rather than presented as current.
@@ -135,7 +181,7 @@ Vercel Hobby cron runs once a day at most, so Supabase calls the routes instead.
 3. Paste it into the Supabase SQL editor and run it. Do not commit the filled-in copy.
 
 The file schedules quotes every 15 minutes in market hours, the EOD batches after the close, the daily
-results and fundamentals refresh, the weekly backtest, and a daily clean-up of old `job_runs` rows. It also lists the queries to inspect scheduled jobs and recent HTTP responses.
+results and fundamentals refresh, the weekly backtest, the weekly AI read (optional; it spends money), and a daily clean-up of old `job_runs` rows. It also lists the queries to inspect scheduled jobs and recent HTTP responses.
 
 ## Deploying on Vercel (GitHub auto-deploy)
 
@@ -143,11 +189,13 @@ results and fundamentals refresh, the weekly backtest, and a daily clean-up of o
 2. In Vercel, import the repository (framework preset: Next.js).
 3. Add these environment variables for Production: `NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ALLOWED_EMAIL`
-   (and `ANTHROPIC_API_KEY` from Phase 4). `DATABASE_URL` is only needed locally.
+   and `ANTHROPIC_API_KEY` (plus `EXTERNAL_SIGNALS_MODEL` if you want a model other than the default). `DATABASE_URL` is only needed locally.
 4. Deploy, sign in, then set up scheduling as above.
 5. Run `npm run backfill` locally; it writes to the same database the deployed app reads.
 
-The cron routes set `maxDuration = 60`. If your Vercel plan caps functions lower than that, the EOD job
+`/api/cron/external` and the stock page (for the Refresh button) set `maxDuration = 300` because one AI call
+can take over a minute. If your Vercel plan caps functions lower, run `npm run external` locally instead.
+The other cron routes set `maxDuration = 60`. If your Vercel plan caps functions lower than that, the EOD job
 still completes; it just needs more of its 5-minute calls.
 
 ## Disclaimer

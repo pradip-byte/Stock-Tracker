@@ -12,7 +12,7 @@ create extension if not exists pg_net;
 
 -- Remove earlier versions of these jobs so the script can be re-run safely
 select cron.unschedule(jobname) from cron.job
-where jobname in ('stock-quotes-15m', 'stock-eod', 'stock-eod-late', 'stock-fundamentals', 'stock-backtest', 'stock-job-runs-cleanup');
+where jobname in ('stock-quotes-15m', 'stock-eod', 'stock-eod-late', 'stock-fundamentals', 'stock-backtest', 'stock-external', 'stock-job-runs-cleanup');
 
 -- Quotes: every 15 minutes, Mon-Fri, 03:00-10:59 UTC (08:30-16:29 IST).
 -- The route itself only does work between 09:15 and 15:30 IST and skips otherwise.
@@ -80,6 +80,24 @@ select cron.schedule(
     url := 'https://YOUR-APP.vercel.app/api/cron/backtest',
     headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
     timeout_milliseconds := 58000
+  );
+  $$
+);
+
+-- External signals (AI): Sundays, every 5 minutes, 02:00-03:55 UTC (07:30-09:25 IST).
+-- Covers the watchlist plus the top 30 by technical score, minus stocks the skip rule leaves out.
+-- Each call works for about 150 seconds (the route allows 300), then the next call continues;
+-- once nothing is due the remaining calls are skipped and cost nothing.
+-- THIS JOB SPENDS MONEY on the Anthropic API. Leave it out if you prefer to run
+-- `npm run external` by hand.
+select cron.schedule(
+  'stock-external',
+  '*/5 2-3 * * 0',
+  $$
+  select net.http_get(
+    url := 'https://YOUR-APP.vercel.app/api/cron/external',
+    headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
+    timeout_milliseconds := 295000
   );
   $$
 );

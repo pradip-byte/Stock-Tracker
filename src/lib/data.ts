@@ -7,7 +7,10 @@ import {
   INDEX_SYMBOLS,
   type BacktestWindow,
   type Candle,
+  type AiRun,
   type DashboardData,
+  type DatedRisk,
+  type ExternalRead,
   type JobRun,
   type Quotes,
   type SignalKind,
@@ -243,7 +246,71 @@ export async function getStockDetail(symbol: string): Promise<StockDetail | null
     n(r.fiscal_year_end_month),
   ).slice(-8);
   const [stock, sector] = await Promise.all([getBacktests(db, "stock", symbol), getBacktests(db, "sector", r.sector)]);
-  return { row: mapRow(r), candles, quarters, today: todayIST(), backtests: { stock, sector } };
+  return { row: mapRow(r), candles, quarters, today: todayIST(), backtests: { stock, sector }, external: await getExternal(db, symbol) };
+}
+
+/** Risks are shown only when they carry a source link and date; older rows stored plain strings. */
+const datedOnly = (v: unknown): DatedRisk[] =>
+  (Array.isArray(v) ? v : []).filter((x): x is DatedRisk => typeof x === "object" && x !== null && typeof x.risk === "string" && typeof x.url === "string" && typeof x.published === "string");
+
+async function getExternal(db: SupabaseClient, symbol: string): Promise<ExternalRead | null> {
+  const { data: e } = await db
+    .from("external_signals")
+    .select("run_at,model,score,sentiment,confidence,payload,sources,sector_research_id")
+    .eq("symbol", symbol)
+    .order("run_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!e) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const p = (e.payload ?? {}) as Record<string, any>;
+  let sector: ExternalRead["sector"] = null;
+  if (e.sector_research_id) {
+    const { data: sr } = await db.from("sector_research").select("sector,run_at,payload,sources").eq("id", e.sector_research_id).maybeSingle();
+    if (sr) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sp = (sr.payload ?? {}) as Record<string, any>;
+      sector = {
+        name: sr.sector,
+        runAt: sr.run_at,
+        outlook: sp.outlook ?? "",
+        outlookScore: Number(sp.outlook_score ?? 0),
+        exportImport: sp.export_import_exposure ?? "",
+        currencyCommodity: sp.currency_commodity_sensitivity ?? "",
+        risks: datedOnly(sp.key_risks),
+        sources: Array.isArray(sr.sources) ? sr.sources : [],
+      };
+    }
+  }
+  return {
+    runAt: e.run_at,
+    model: e.model,
+    score: n(e.score),
+    sentiment: Number(e.sentiment ?? 0),
+    sentimentRationale: p.sentiment_rationale ?? "",
+    confidence: Number(e.confidence ?? 0),
+    searches: n(p.searches),
+    keyNews: Array.isArray(p.key_news) ? p.key_news : [],
+    guidance: p.last_quarter_guidance ?? { summary: "", tone: 0, url: null },
+    expectations: p.next_result_expectations ?? { summary: "", tone: 0 },
+    resultDate: p.next_result_date ?? { date: null, basis: "none", url: null, confirmed: false },
+    companyRisks: datedOnly(p.company_risks),
+    sources: Array.isArray(e.sources) ? e.sources : [],
+    sector,
+  };
+}
+
+/** AI calls from the last 62 days, newest first, for the spend panel. */
+export async function getAiRuns(): Promise<AiRun[]> {
+  const db = await userDb();
+  const since = new Date(Date.now() - 62 * 86400000).toISOString();
+  const { data } = await db
+    .from("ai_runs")
+    .select("id,kind,key,trigger,model,status,started_at,duration_ms,input_tokens,output_tokens,searches,cost_usd,error")
+    .gte("started_at", since)
+    .order("started_at", { ascending: false })
+    .limit(1000);
+  return (data ?? []).map((r) => ({ ...r, cost_usd: Number(r.cost_usd) })) as AiRun[];
 }
 
 export async function getJobRuns(limit = 60): Promise<JobRun[]> {

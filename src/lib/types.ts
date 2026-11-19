@@ -100,6 +100,52 @@ export type DashboardData = {
   counts: { tracked: number; pending: number; bounce: number; trend: number; breakdown: number };
 };
 
+/** A risk backed by a news source dated within 90 days of the read. */
+export type DatedRisk = { risk: string; url: string; published: string };
+
+/** The latest AI read for a stock. Every link in it appeared in the search results of the run. */
+export type ExternalRead = {
+  runAt: string;
+  model: string | null;
+  score: number | null;
+  sentiment: number;
+  sentimentRationale: string;
+  confidence: number;
+  searches: number | null;
+  keyNews: { headline: string; url: string; published: string; why_it_matters: string }[];
+  guidance: { summary: string; tone: number; url: string | null };
+  expectations: { summary: string; tone: number };
+  resultDate: { date: string | null; basis: string; url: string | null; confirmed: boolean };
+  companyRisks: DatedRisk[];
+  sources: { url: string; title: string }[];
+  sector: {
+    name: string;
+    runAt: string;
+    outlook: string;
+    outlookScore: number;
+    exportImport: string;
+    currencyCommodity: string;
+    risks: DatedRisk[];
+    sources: { url: string; title: string }[];
+  } | null;
+};
+
+export type AiRun = {
+  id: number;
+  kind: "sector" | "stock";
+  key: string;
+  trigger: "weekly" | "manual";
+  model: string | null;
+  status: "running" | "ok" | "error" | "refused";
+  started_at: string;
+  duration_ms: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  searches: number;
+  cost_usd: number;
+  error: string | null;
+};
+
 export type StockDetail = {
   row: StockRow;
   candles: Candle[];
@@ -107,6 +153,7 @@ export type StockDetail = {
   today: string;
   /** Backtests for this stock and, as a fallback for thin samples, its sector. */
   backtests: { stock: SignalStats[]; sector: SignalStats[] };
+  external: ExternalRead | null;
 };
 
 export type JobRun = {

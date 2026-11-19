@@ -4,9 +4,10 @@ import clsx from "clsx";
 import { useState, useTransition } from "react";
 import { runJobAction } from "@/app/actions";
 import { fmtIST } from "@/lib/market";
-import type { JobRun } from "@/lib/types";
+import type { AiRun, JobRun } from "@/lib/types";
 import { TypeIn } from "../motion/primitives";
 import { Button, Card, Stat } from "../ui/core";
+import { AiSpend } from "./AiSpend";
 
 const COLS = "grid grid-cols-[150px_120px_80px_64px_64px_70px_1fr] items-start gap-3 px-3.5";
 const bad = (s: string) => s === "error" || s === "partial";
@@ -31,7 +32,9 @@ export function AdminView({
   runs,
   total,
   problems,
+  aiRuns,
 }: {
+  aiRuns: AiRun[];
   runs: JobRun[];
   total: number;
   problems: { symbol: string; status: string; error: string | null }[];
@@ -110,6 +113,8 @@ export function AdminView({
             </div>
           </Card>
         )}
+
+        <AiSpend runs={aiRuns} />
 
         <Card className="col-span-12" title="Job runs (latest 60)" bodyClassName="overflow-x-auto">
           <div className="min-w-[900px]">

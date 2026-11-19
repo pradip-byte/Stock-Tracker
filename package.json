@@ -12,9 +12,11 @@
     "backfill": "tsx scripts/backfill.ts",
     "auth:set-password": "tsx scripts/set-password.ts",
     "fundamentals": "tsx scripts/fundamentals.ts",
-    "backtest": "tsx scripts/backtest.ts"
+    "backtest": "tsx scripts/backtest.ts",
+    "external": "tsx scripts/external.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.119.1",
     "clsx": "^2.1.1",
