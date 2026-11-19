@@ -1,0 +1,67 @@
+-- Scheduling for Stock Tracker. Run this ONCE in the Supabase SQL editor
+-- (Dashboard > SQL Editor) after the app is deployed.
+--
+-- Replace the two placeholders first:
+--   https://YOUR-APP.vercel.app   your Vercel production URL
+--   YOUR_CRON_SECRET              the CRON_SECRET value from .env.local / Vercel
+--
+-- Do not commit a filled-in copy of this file. pg_cron runs in UTC; IST = UTC + 5:30.
+
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- Remove earlier versions of these jobs so the script can be re-run safely
+select cron.unschedule(jobname) from cron.job
+where jobname in ('stock-quotes-15m', 'stock-eod', 'stock-eod-late', 'stock-job-runs-cleanup');
+
+-- Quotes: every 15 minutes, Mon-Fri, 03:00-10:59 UTC (08:30-16:29 IST).
+-- The route itself only does work between 09:15 and 15:30 IST and skips otherwise.
+select cron.schedule(
+  'stock-quotes-15m',
+  '*/15 3-10 * * 1-5',
+  $$
+  select net.http_get(
+    url := 'https://YOUR-APP.vercel.app/api/cron/quotes',
+    headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
+    timeout_milliseconds := 55000
+  );
+  $$
+);
+
+-- End of day: every 5 minutes, Mon-Fri, 10:15-11:55 UTC (15:45-17:25 IST).
+-- Each call processes stocks for up to 45 seconds and the next call continues,
+-- so the full list finishes within a few calls. Later calls are skipped as "already done".
+select cron.schedule(
+  'stock-eod',
+  '15-59/5 10 * * 1-5',
+  $$
+  select net.http_get(
+    url := 'https://YOUR-APP.vercel.app/api/cron/eod',
+    headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
+    timeout_milliseconds := 58000
+  );
+  $$
+);
+select cron.schedule(
+  'stock-eod-late',
+  '*/5 11 * * 1-5',
+  $$
+  select net.http_get(
+    url := 'https://YOUR-APP.vercel.app/api/cron/eod',
+    headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
+    timeout_milliseconds := 58000
+  );
+  $$
+);
+
+-- Housekeeping: keep 30 days of job history
+select cron.schedule(
+  'stock-job-runs-cleanup',
+  '30 20 * * *',
+  $$ delete from public.job_runs where started_at < now() - interval '30 days'; $$
+);
+
+-- Check what is scheduled and how recent calls went:
+--   select jobname, schedule, active from cron.job;
+--   select * from cron.job_run_details order by start_time desc limit 20;
+--   select id, status_code, error_msg, created from net._http_response order by created desc limit 20;

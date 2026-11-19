@@ -1,0 +1,142 @@
+/** Read side. Uses the signed-in user's client, so RLS decides what comes back. */
+import { userDb } from "./supabase/server";
+import { INDEX_SYMBOLS, type Candle, type DashboardData, type JobRun, type Quotes, type StockDetail, type StockRow } from "./types";
+
+const n = (v: unknown): number | null => (v == null ? null : Number(v));
+const arr = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number) : []);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapRow(r: any): StockRow {
+  const bounce = !!r.sig_bounce, breakdown = !!r.sig_breakdown, trend = !!r.sig_trend;
+  return {
+    symbol: r.symbol,
+    name: r.name,
+    sector: r.sector,
+    source: r.source,
+    inWatchlist: !!r.in_watchlist,
+    backfillStatus: r.backfill_status,
+    backfillError: r.backfill_error,
+    price: n(r.price) ?? n(r.ind_close),
+    prevClose: n(r.prev_close),
+    marketTime: r.market_time,
+    indDate: r.ind_date,
+    spark: arr(r.spark),
+    hi52: n(r.hi52),
+    lo52: n(r.lo52),
+    distHi52: n(r.dist_hi52_pct),
+    distLo52: n(r.dist_lo52_pct),
+    rsi: n(r.rsi14),
+    sma20: n(r.sma20),
+    sma50: n(r.sma50),
+    sma200: n(r.sma200),
+    atr: n(r.atr14),
+    volRatio: n(r.vol_ratio20),
+    support: arr(r.support),
+    resistance: arr(r.resistance),
+    bounce,
+    trend,
+    breakdown,
+    signal: bounce ? "Bounce" : breakdown ? "Breakdown" : trend ? "Trend" : null,
+    tech: n(r.technical),
+    techReasons: Array.isArray(r.technical_reasons) ? r.technical_reasons : [],
+    risk: r.risk,
+    rr: n(r.reward_risk),
+    target: n(r.target),
+    stop: n(r.stop),
+    event: n(r.event),
+    external: n(r.external),
+    overall: n(r.overall),
+    shortVerdict: r.short_verdict,
+    longVerdict: r.long_verdict,
+  };
+}
+
+export async function getRows(): Promise<StockRow[]> {
+  const db = await userDb();
+  const { data, error } = await db.from("stock_latest").select("*").eq("kind", "equity").order("symbol").limit(2000);
+  if (error) throw new Error(`stock_latest: ${error.message}`);
+  return (data ?? []).map(mapRow);
+}
+
+export async function getQuotes(): Promise<Quotes> {
+  const db = await userDb();
+  const { data } = await db.from("quotes_latest").select("symbol,price,prev_close,market_time").limit(2000);
+  const out: Quotes = {};
+  for (const q of data ?? []) {
+    out[q.symbol] = { price: Number(q.price), prevClose: n(q.prev_close), marketTime: q.market_time };
+  }
+  return out;
+}
+
+export async function getDashboard(): Promise<DashboardData> {
+  const db = await userDb();
+  const [all, nifty] = await Promise.all([
+    getRows(),
+    db.from("candles_daily").select("date,close").eq("symbol", INDEX_SYMBOLS[0]).order("date", { ascending: false }).limit(120),
+  ]);
+  const ready = all.filter((r) => r.backfillStatus === "done" && r.tech != null);
+  const byTech = (a: StockRow, b: StockRow) => (b.tech ?? 0) - (a.tech ?? 0);
+
+  const shortSetups = ready.filter((r) => r.bounce || r.trend).sort((a, b) => Number(b.bounce) - Number(a.bounce) || byTech(a, b)).slice(0, 10);
+  // Interim definition until fundamentals arrive in Phase 2: established uptrends near their highs
+  const longCandidates = ready
+    .filter((r) => r.trend && !r.breakdown && (r.distHi52 ?? -100) >= -15)
+    .sort(byTech)
+    .slice(0, 6);
+  const highRisk = ready
+    .filter((r) => r.risk === "High" && (r.rr ?? 0) >= 1.5 && !r.breakdown)
+    .sort((a, b) => (b.rr ?? 0) - (a.rr ?? 0))
+    .slice(0, 6);
+
+  const sectorNames = [...new Set(ready.map((r) => r.sector ?? "Other"))].sort();
+  const eodDate = ready.reduce<string | null>((m, r) => (r.indDate && (!m || r.indDate > m) ? r.indDate : m), null);
+
+  return {
+    rows: Object.fromEntries(all.map((r) => [r.symbol, r])),
+    niftySeries: (nifty.data ?? []).map((c) => ({ date: c.date, close: Number(c.close) })).reverse(),
+    eodDate,
+    shortSetups: shortSetups.map((r) => r.symbol),
+    longCandidates: longCandidates.map((r) => r.symbol),
+    highRisk: highRisk.map((r) => r.symbol),
+    sectors: sectorNames.map((sector) => ({
+      sector,
+      symbols: ready.filter((r) => (r.sector ?? "Other") === sector).map((r) => r.symbol),
+    })),
+    counts: {
+      tracked: all.length,
+      pending: all.length - ready.length,
+      bounce: ready.filter((r) => r.bounce).length,
+      trend: ready.filter((r) => r.trend).length,
+      breakdown: ready.filter((r) => r.breakdown).length,
+    },
+  };
+}
+
+export async function getStockDetail(symbol: string): Promise<StockDetail | null> {
+  const db = await userDb();
+  const { data: r, error } = await db.from("stock_latest").select("*").eq("symbol", symbol).eq("kind", "equity").maybeSingle();
+  if (error) throw new Error(`stock_latest: ${error.message}`);
+  if (!r) return null;
+  // PostgREST caps a response at 1000 rows, so page through the 10-year history
+  const candles: Candle[] = [];
+  for (let from = 0; from < 6000; from += 1000) {
+    const { data, error: e } = await db
+      .from("candles_daily")
+      .select("date,open,high,low,close,volume")
+      .eq("symbol", symbol)
+      .order("date", { ascending: true })
+      .range(from, from + 999);
+    if (e) throw new Error(`candles: ${e.message}`);
+    for (const c of data ?? []) {
+      candles.push({ time: c.date, open: +c.open, high: +c.high, low: +c.low, close: +c.close, volume: +c.volume });
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return { row: mapRow(r), candles };
+}
+
+export async function getJobRuns(limit = 60): Promise<JobRun[]> {
+  const db = await userDb();
+  const { data } = await db.from("job_runs").select("*").order("started_at", { ascending: false }).limit(limit);
+  return (data ?? []) as JobRun[];
+}
