@@ -4,6 +4,7 @@
  * provider; a symbol that still fails is counted and logged, and the job moves on.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { analyseQuarters, eventScore, fiscalLabel, postResultReaction } from "../events";
 import { isAfterClose, isMarketOpen, istParts, todayIST } from "../market";
 import { getProvider } from "../providers";
 import { computeSeries, snapshotAt, technicalScore } from "../signals";
@@ -324,5 +325,151 @@ export async function addStock(rawSymbol: string): Promise<{ ok: boolean; error?
   } catch (e) {
     await finishJob(db, id, { status: "error", error: msg(e) });
     return { ok: false, error: msg(e), symbol };
+  }
+}
+
+// ───────────────────────── results and fundamentals (daily) ─────────────────────────
+
+/** Fetch result dates, quarterly results and ratios for one stock, then score it. */
+export async function refreshFundamentalsFor(db: SupabaseClient, symbol: string, providerSymbol: string): Promise<void> {
+  const provider = getProvider();
+  const [earn, fund] = await Promise.all([provider.getEarnings(providerSymbol), provider.getFundamentals(providerSymbol)]);
+
+  // candles around the reported results, to measure how the price reacted
+  const { data: cd, error: ce } = await db
+    .from("candles_daily")
+    .select("date,open,high,low,close,volume")
+    .eq("symbol", symbol)
+    .order("date", { ascending: false })
+    .limit(520);
+  if (ce) throw new Error(`candles read: ${ce.message}`);
+  const candles: Candle[] = (cd ?? [])
+    .map((r) => ({ time: r.date, open: +r.open, high: +r.high, low: +r.low, close: +r.close, volume: +r.volume }))
+    .reverse();
+
+  const now = new Date().toISOString();
+  const rows = earn.quarters.map((q) => {
+    const react = q.reportedAt ? postResultReaction(candles, q.reportedAt) : { d1: null, d5: null };
+    return {
+      symbol,
+      period_end: q.periodEnd,
+      fiscal_label: fiscalLabel(q.periodEnd),
+      result_date: q.reportedAt ? istParts(new Date(q.reportedAt)).date : null,
+      reported_at: q.reportedAt,
+      revenue: q.revenue,
+      net_profit: q.netProfit,
+      eps: q.eps,
+      eps_estimate: q.epsEstimate,
+      reaction_1d: react.d1,
+      reaction_5d: react.d5,
+      source: earn.source,
+      fetched_at: now,
+    };
+  });
+  if (rows.length) {
+    const { error } = await db.from("earnings").upsert(rows, { onConflict: "symbol,period_end" });
+    if (error) throw new Error(`earnings upsert: ${error.message}`);
+  }
+
+  // score from everything stored, so quarters collected on earlier runs still count
+  const { data: all, error: ae } = await db
+    .from("earnings")
+    .select("period_end,revenue,net_profit,eps,eps_estimate,reported_at,reaction_1d,reaction_5d")
+    .eq("symbol", symbol)
+    .order("period_end", { ascending: true })
+    .limit(40);
+  if (ae) throw new Error(`earnings read: ${ae.message}`);
+  const num = (v: unknown) => (v == null ? null : Number(v));
+  const quarters = analyseQuarters(
+    (all ?? []).map((q) => ({
+      periodEnd: q.period_end,
+      revenue: num(q.revenue),
+      netProfit: num(q.net_profit),
+      eps: num(q.eps),
+      epsEstimate: num(q.eps_estimate),
+      reportedAt: q.reported_at,
+      reaction1d: num(q.reaction_1d),
+      reaction5d: num(q.reaction_5d),
+    })),
+  ).slice(-8);
+  const ev = eventScore(quarters);
+
+  const { error: fe } = await db.from("fundamentals").upsert(
+    {
+      symbol,
+      next_result_date: earn.nextResultDate,
+      next_result_is_estimate: earn.nextResultDate ? earn.nextIsEstimate : false,
+      next_result_source: earn.nextResultDate ? earn.source : null,
+      pe: fund.pe,
+      roe: fund.roe,
+      debt_to_equity: fund.debtToEquity,
+      profit_margin: fund.profitMargin,
+      event_score: ev.score,
+      event_reasons: ev.reasons,
+      error: null,
+      fetched_at: now,
+    },
+    { onConflict: "symbol" },
+  );
+  if (fe) throw new Error(`fundamentals upsert: ${fe.message}`);
+}
+
+/**
+ * Refresh results and fundamentals for stocks not updated in the last 20 hours,
+ * oldest first, within a time budget. Call repeatedly until nothing remains.
+ */
+export async function refreshFundamentals(
+  opts: { force?: boolean; budgetMs?: number; symbols?: string[]; retryErrors?: boolean; onProgress?: (s: string, err?: string) => void } = {},
+): Promise<JobResult> {
+  const db = adminDb();
+  const id = await startJob(db, "fundamentals");
+  const started = Date.now();
+  const budget = opts.budgetMs ?? 45000;
+  try {
+    const [{ data: stocks, error }, { data: have }] = await Promise.all([
+      db.from("stocks").select("symbol,provider_symbol").eq("kind", "equity").eq("backfill_status", "done").order("symbol"),
+      db.from("fundamentals").select("symbol,fetched_at,error"),
+    ]);
+    if (error) throw new Error(error.message);
+    const seen = new Map((have ?? []).map((f) => [f.symbol as string, f.fetched_at as string]));
+    const cutoff = new Date(Date.now() - 20 * 3600000).toISOString();
+    const errored = new Set((have ?? []).filter((f) => f.error).map((f) => f.symbol as string));
+    const todo = (stocks ?? [])
+      .filter((s) => !opts.symbols || opts.symbols.includes(s.symbol))
+      .filter((s) => opts.force || opts.symbols || !seen.has(s.symbol) || seen.get(s.symbol)! < cutoff || (opts.retryErrors && errored.has(s.symbol)))
+      .sort((a, b) => (seen.get(a.symbol) ?? "").localeCompare(seen.get(b.symbol) ?? ""));
+    if (!todo.length) {
+      const reason = "every stock was refreshed in the last 20 hours";
+      await finishJob(db, id, { status: "skipped", detail: { reason } });
+      return { status: "skipped", ok: 0, failed: 0, detail: { reason } };
+    }
+
+    let ok = 0;
+    const failures: Failure[] = [];
+    await pool(
+      todo,
+      3,
+      async (s) => {
+        try {
+          await refreshFundamentalsFor(db, s.symbol, s.provider_symbol);
+          ok++;
+          opts.onProgress?.(s.symbol);
+        } catch (e) {
+          failures.push({ symbol: s.symbol, error: msg(e) });
+          opts.onProgress?.(s.symbol, msg(e));
+          // record the failure and move it to the back of the queue; earlier values are kept
+          await db.from("fundamentals").upsert({ symbol: s.symbol, error: msg(e), fetched_at: new Date().toISOString() }, { onConflict: "symbol" });
+        }
+      },
+      () => Date.now() - started > budget,
+    );
+    const remaining = todo.length - ok - failures.length;
+    const status = failures.length || remaining > 0 ? "partial" : "ok";
+    const detail = { remaining, total: todo.length };
+    await finishJob(db, id, { status, ok, failures, detail });
+    return { status, ok, failed: failures.length, detail };
+  } catch (e) {
+    await finishJob(db, id, { status: "error", error: msg(e) });
+    return { status: "error", ok: 0, failed: 0, error: msg(e) };
   }
 }

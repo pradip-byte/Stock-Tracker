@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import { useMemo, useState, useTransition } from "react";
 import { setWatchlistAction } from "@/app/actions";
-import { changePct, inr, pct, toneOf } from "@/lib/format";
+import { changePct, dayDiff, inr, pct, shortDate, toneOf } from "@/lib/format";
 import type { StockRow } from "@/lib/types";
 import { TypeIn } from "../motion/primitives";
 import { useQuote } from "../shell/quotes";
@@ -13,16 +13,18 @@ import { Freshness } from "../ui/Freshness";
 import { Segmented } from "../ui/Segmented";
 
 const COLS =
-  "grid grid-cols-[28px_minmax(200px,1.6fr)_minmax(140px,1fr)_100px_80px_56px_minmax(96px,.6fr)_56px_64px_84px] items-center gap-3 px-3.5";
-const FILTERS = ["All", "Watchlist", "Signals", "Added by me"] as const;
-type SortKey = "symbol" | "tech" | "chg";
+  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_100px_70px] items-center gap-3 px-3.5";
+const FILTERS = ["All", "Watchlist", "Signals", "Results in 30D", "Added by me"] as const;
+type SortKey = "symbol" | "tech" | "chg" | "event";
 
-function Row({ r }: { r: StockRow }) {
+function Row({ r, today }: { r: StockRow; today: string }) {
   const q = useQuote(r.symbol);
   const price = q?.price ?? r.price;
   const ch = q?.prevClose ? changePct(q.price, q.prevClose) : null;
   const [watch, setWatch] = useState(r.inWatchlist);
   const [, start] = useTransition();
+  const upcoming = r.nextResultDate != null && r.nextResultDate >= today;
+  const soon = upcoming && dayDiff(today, r.nextResultDate!) <= 30;
   return (
     <div className={clsx(COLS, "h-10 border-b border-line/70 hover:bg-metal-2/60")}>
       <button
@@ -51,7 +53,11 @@ function Row({ r }: { r: StockRow }) {
       <span className="num justify-self-end text-[12px] text-ink">{r.rsi?.toFixed(0) ?? "—"}</span>
       <SignalTag kind={r.signal} />
       <span className="num justify-self-end text-[12px] text-ink">{r.tech ?? "—"}</span>
+      <span className="num justify-self-end text-[12px] text-ink">{r.event ?? "—"}</span>
       <span className="num justify-self-end text-[12px] text-ink">{r.rr != null ? `${r.rr.toFixed(1)}x` : "—"}</span>
+      <span className={clsx("num justify-self-end text-[11px]", soon ? "text-amber" : "text-steel")}>
+        {upcoming ? `${shortDate(r.nextResultDate!)}${r.nextResultEstimate ? " est." : ""}` : "unknown"}
+      </span>
       <span
         className={clsx(
           "num justify-self-end text-[10px] uppercase tracking-wider",
@@ -66,7 +72,7 @@ function Row({ r }: { r: StockRow }) {
 }
 
 /** Every tracked stock, with search, filters, sorting and the watchlist toggle. */
-export function StocksTable({ rows }: { rows: StockRow[] }) {
+export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [sort, setSort] = useState<SortKey>("symbol");
@@ -79,15 +85,17 @@ export function StocksTable({ rows }: { rows: StockRow[] }) {
       if (filter === "Watchlist") return r.inWatchlist;
       if (filter === "Signals") return r.signal != null;
       if (filter === "Added by me") return r.source === "user";
+      if (filter === "Results in 30D") return r.nextResultDate != null && r.nextResultDate >= today && dayDiff(today, r.nextResultDate) <= 30;
       return true;
     });
     if (sort === "tech") list.sort((a, b) => (b.tech ?? -1) - (a.tech ?? -1));
+    else if (sort === "event") list.sort((a, b) => (b.event ?? -1) - (a.event ?? -1));
     else if (sort === "chg") {
       const c = (r: StockRow) => (r.price != null && r.prevClose ? changePct(r.price, r.prevClose) : -999);
       list.sort((a, b) => c(b) - c(a));
     } else list.sort((a, b) => a.symbol.localeCompare(b.symbol));
     return list;
-  }, [rows, query, filter, sort]);
+  }, [rows, query, filter, sort, today]);
 
   const head = (label: string, key?: SortKey, end = true) => (
     <span className={end ? "justify-self-end" : undefined}>
@@ -124,7 +132,7 @@ export function StocksTable({ rows }: { rows: StockRow[] }) {
         right={<Freshness mode="eod" at={eodDate} />}
         bodyClassName="overflow-x-auto"
       >
-        <div className="min-w-[1060px]">
+        <div className="min-w-[1180px]">
           <div className={clsx(COLS, "label h-8 border-b border-line text-[10px] text-steel")}>
             <span />
             {head("Stock", "symbol", false)}
@@ -134,11 +142,13 @@ export function StocksTable({ rows }: { rows: StockRow[] }) {
             {head("RSI")}
             <span>Signal</span>
             {head("Tech", "tech")}
+            {head("Event", "event")}
             {head("R:R")}
+            {head("Next result")}
             {head("Data")}
           </div>
           {shown.map((r) => (
-            <Row key={r.symbol} r={r} />
+            <Row key={r.symbol} r={r} today={today} />
           ))}
           {shown.length === 0 && <p className="p-4 text-[12.5px] text-steel">Nothing matches.</p>}
         </div>

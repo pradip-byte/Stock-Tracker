@@ -6,10 +6,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ViewTransition, useState, useTransition } from "react";
 import { removeStockAction, setWatchlistAction } from "@/app/actions";
-import { changePct, inr, pct, toneOf } from "@/lib/format";
-import type { StockDetail, StockRow } from "@/lib/types";
+import { changePct, dayDiff, inr, pct, shortDate, toneOf } from "@/lib/format";
+import { fmtIST } from "@/lib/market";
+import type { Quarter, StockDetail, StockRow } from "@/lib/types";
 import { CandleChart } from "../charts/CandleChart";
-import { RadialGauge, RangeSlider } from "../charts/primitives";
+import { QuarterBars, RadialGauge, RangeSlider } from "../charts/primitives";
 import { Odometer } from "../motion/Odometer";
 import { Rise, TypeIn } from "../motion/primitives";
 import { dur, ease, seq } from "../motion/tokens";
@@ -86,6 +87,109 @@ function EmptyGauge({ label, phase }: { label: string; phase: number }) {
       </div>
       <span className="label text-[10px] text-steel/70">{label}</span>
     </div>
+  );
+}
+
+const na = <span className="num text-sm text-steel">not available</span>;
+
+function Results({
+  row,
+  quarters,
+  upcoming,
+  daysToResult,
+}: {
+  row: StockRow;
+  quarters: Quarter[];
+  upcoming: boolean;
+  daysToResult: number | null;
+}) {
+  const ratio = (v: number | null, unit: string, d = 1) =>
+    v == null ? (
+      na
+    ) : (
+      <span className="num text-[15px] text-ink">
+        {v.toFixed(d)}
+        <span className="text-steel">{unit}</span>
+      </span>
+    );
+  const reported = quarters.filter((q) => q.resultDate).slice(-4).reverse();
+  const last = [...quarters].reverse().find((q) => q.margin != null);
+  return (
+    <Card
+      index={8}
+      className="col-span-12"
+      title="Results and fundamentals"
+      right={<Freshness mode="text" label={row.fundamentalsAt ? `Yahoo / checked ${fmtIST(row.fundamentalsAt)}` : "Not fetched yet"} />}
+    >
+      {!row.fundamentalsAt ? (
+        <p className="text-[12.5px] text-steel">
+          Not fetched yet. Run <span className="num text-ink">npm run fundamentals</span> or wait for the daily job.
+        </p>
+      ) : (
+        <div className="grid grid-cols-12 gap-x-6 gap-y-5">
+          <div className="col-span-12 grid grid-cols-3 content-start gap-x-4 gap-y-4 lg:col-span-3 lg:grid-cols-2">
+            <Stat label="Next result">
+              <span className={clsx("display text-3xl", !upcoming && "text-steel")}>
+                {upcoming ? shortDate(row.nextResultDate!) : "Unknown"}
+              </span>
+              <span className={clsx("num text-[10px]", upcoming && daysToResult! <= 30 ? "text-amber" : "text-steel")}>
+                {upcoming
+                  ? `in ${daysToResult} days${row.nextResultEstimate ? " / estimate" : ""} / ${row.nextResultSource}`
+                  : "no upcoming date published"}
+              </span>
+            </Stat>
+            <Stat label="P/E (trailing)">{ratio(row.pe, "x")}</Stat>
+            <Stat label="ROE">{ratio(row.roe, "%")}</Stat>
+            <Stat label="Debt / equity">{ratio(row.debtToEquity, "x", 2)}</Stat>
+            <Stat label="Net margin (TTM)">{ratio(row.profitMargin, "%")}</Stat>
+            <Stat label={`Net margin ${last?.label ?? ""}`}>{ratio(last?.margin ?? null, "%")}</Stat>
+          </div>
+
+          {quarters.length === 0 ? (
+            <p className="col-span-12 text-[12.5px] text-steel lg:col-span-9">The provider has no quarterly results for this stock.</p>
+          ) : (
+            <>
+              <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                <span className="label text-[10px] text-steel">Revenue / Rs crore / YoY below</span>
+                <QuarterBars quarters={quarters} field="revenue" />
+              </div>
+              <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                <span className="label text-[10px] text-steel">Net profit / Rs crore / YoY below</span>
+                <QuarterBars quarters={quarters} field="profit" delay={seq.charts + 0.15} />
+              </div>
+              <div className="col-span-12 lg:col-span-3">
+                <span className="label text-[10px] text-steel">Price reaction to past results</span>
+                <div className="num mt-2 grid grid-cols-[1fr_70px_60px_60px] gap-x-2 text-[9px] uppercase tracking-wider text-steel">
+                  <span>Quarter</span>
+                  <span>Announced</span>
+                  <span className="text-right">1 day</span>
+                  <span className="text-right">5 days</span>
+                </div>
+                {reported.map((q) => (
+                  <div key={q.periodEnd} className="num grid grid-cols-[1fr_70px_60px_60px] gap-x-2 border-t border-line/70 py-1.5 text-[11px]">
+                    <span className="text-ink">{q.label}</span>
+                    <span className="text-steel">{shortDate(q.resultDate!)}</span>
+                    <span className={clsx("text-right", q.reaction1d == null ? "text-steel" : toneOf(q.reaction1d))}>
+                      {q.reaction1d == null ? "—" : pct(q.reaction1d, 1)}
+                    </span>
+                    <span className={clsx("text-right", q.reaction5d == null ? "text-steel" : toneOf(q.reaction5d))}>
+                      {q.reaction5d == null ? "—" : pct(q.reaction5d, 1)}
+                    </span>
+                  </div>
+                ))}
+                {reported.length === 0 && <p className="mt-2 text-[12px] text-steel">No announcement dates available.</p>}
+              </div>
+              {quarters.length < 8 && (
+              <p className="num col-span-12 border-t border-line pt-2.5 text-[10px] uppercase leading-relaxed tracking-wider text-steel">
+                <span className="text-amber">{quarters.length} of 8 quarters available.</span> Yahoo carries only the most recent quarters
+                for NSE stocks; history builds up here as each new result is stored. YoY shows only where the year-ago quarter exists.
+              </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -173,7 +277,9 @@ function Controls({ row }: { row: StockRow }) {
 }
 
 export function StockView({ detail }: { detail: StockDetail }) {
-  const { row, candles } = detail;
+  const { row, candles, quarters, today } = detail;
+  const upcoming = row.nextResultDate != null && row.nextResultDate >= today;
+  const daysToResult = upcoming ? dayDiff(today, row.nextResultDate!) : null;
   const q = useQuote(row.symbol);
   const price = q?.price ?? row.price;
   const prevClose = q?.prevClose ?? row.prevClose;
@@ -277,14 +383,28 @@ export function StockView({ detail }: { detail: StockDetail }) {
                   )}
                   <div className="flex flex-col gap-3">
                     <div className="flex gap-3">
-                      <EmptyGauge label="Event" phase={2} />
+                      {row.event != null ? (
+                        <RadialGauge value={row.event} label="Event" size={92} delay={seq.charts + 0.1} />
+                      ) : (
+                        <div className="flex w-[92px] flex-col items-center justify-center gap-1 text-center">
+                          <span className="num text-[10px] text-steel">no data</span>
+                          <span className="label text-[10px] text-steel/70">Event</span>
+                        </div>
+                      )}
                       <EmptyGauge label="External" phase={4} />
                     </div>
                     <div className="flex gap-3">
                       <EmptyGauge label="Overall" phase={3} />
                       <div className="flex w-[92px] flex-col justify-center gap-1">
                         <span className="label text-[9px] text-steel">Next result</span>
-                        <span className="num text-[11px] text-steel">Phase 2</span>
+                        <span className={clsx("display text-2xl", !upcoming && "text-steel")}>
+                          {upcoming ? shortDate(row.nextResultDate!) : "Unknown"}
+                        </span>
+                        {upcoming && (
+                          <span className={clsx("num text-[10px]", daysToResult! <= 30 ? "text-amber" : "text-steel")}>
+                            in {daysToResult}d{row.nextResultEstimate ? " / est." : ""}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -344,11 +464,28 @@ export function StockView({ detail }: { detail: StockDetail }) {
               </div>
             </Card>
 
-            <Card index={7} className="col-span-12 xl:col-span-4" title="Results and fundamentals">
-              <Pending phase={2} what="Last 8 quarters of revenue and profit, growth, margins, PE, ROE, debt/equity and the next result date." />
+            <Card
+              index={7}
+              className="col-span-12 xl:col-span-4"
+              title="Why this event score"
+              right={<Freshness mode="text" label={row.fundamentalsAt ? `Checked ${fmtIST(row.fundamentalsAt)}` : "Not fetched yet"} />}
+            >
+              <ol className="flex flex-col">
+                {row.eventReasons.map((r, i) => (
+                  <li key={i} className="flex gap-3 border-b border-line/70 py-2 text-[12.5px] leading-snug text-ink last:border-b-0">
+                    <span className="num pt-px text-[10px] text-steel">{String(i + 1).padStart(2, "0")}</span>
+                    {r}
+                  </li>
+                ))}
+                {row.eventReasons.length === 0 && (
+                  <li className="text-[12.5px] text-steel">Results have not been fetched for this stock yet.</li>
+                )}
+              </ol>
             </Card>
 
-            <Card index={8} className="col-span-12" title="External read">
+            <Results row={row} quarters={quarters} upcoming={upcoming} daysToResult={daysToResult} />
+
+            <Card index={9} className="col-span-12" title="External read">
               <Pending phase={4} what="News sentiment, guidance, expectations and key risks from the weekly AI run, with source links." className="min-h-0" />
             </Card>
           </div>

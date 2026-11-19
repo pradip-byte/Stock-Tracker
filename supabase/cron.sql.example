@@ -12,7 +12,7 @@ create extension if not exists pg_net;
 
 -- Remove earlier versions of these jobs so the script can be re-run safely
 select cron.unschedule(jobname) from cron.job
-where jobname in ('stock-quotes-15m', 'stock-eod', 'stock-eod-late', 'stock-job-runs-cleanup');
+where jobname in ('stock-quotes-15m', 'stock-eod', 'stock-eod-late', 'stock-fundamentals', 'stock-job-runs-cleanup');
 
 -- Quotes: every 15 minutes, Mon-Fri, 03:00-10:59 UTC (08:30-16:29 IST).
 -- The route itself only does work between 09:15 and 15:30 IST and skips otherwise.
@@ -48,6 +48,21 @@ select cron.schedule(
   $$
   select net.http_get(
     url := 'https://YOUR-APP.vercel.app/api/cron/eod',
+    headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
+    timeout_milliseconds := 58000
+  );
+  $$
+);
+
+-- Results and fundamentals: every 5 minutes, every day, 13:00-13:55 UTC (18:30-19:25 IST).
+-- Each call refreshes stocks not updated in the last 20 hours for up to 45 seconds;
+-- once all are fresh the remaining calls are skipped.
+select cron.schedule(
+  'stock-fundamentals',
+  '*/5 13 * * *',
+  $$
+  select net.http_get(
+    url := 'https://YOUR-APP.vercel.app/api/cron/fundamentals',
     headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
     timeout_milliseconds := 58000
   );

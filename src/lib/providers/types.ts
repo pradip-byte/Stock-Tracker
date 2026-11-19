@@ -13,17 +13,28 @@ export type ProviderQuote = {
 
 export type ProviderFundamentals = {
   pe: number | null;
-  roe: number | null;
-  debtToEquity: number | null;
+  roe: number | null; // percent
+  debtToEquity: number | null; // ratio (x)
+  profitMargin: number | null; // percent
   sector: string | null;
   industry: string | null;
 };
 
+export type ProviderQuarter = {
+  periodEnd: string; // YYYY-MM-DD
+  revenue: number | null; // reporting currency, absolute
+  netProfit: number | null;
+  eps: number | null;
+  epsEstimate: number | null;
+  reportedAt: string | null; // ISO timestamp of the announcement
+};
+
 export type ProviderEarnings = {
-  /** Next result date if the provider knows it. Never guessed. */
+  /** Next result date if the provider knows one that is still in the future. Never guessed. */
   nextResultDate: string | null;
   nextIsEstimate: boolean;
-  quarters: { periodEnd: string; revenue: number | null; netProfit: number | null; eps: number | null }[];
+  source: string;
+  quarters: ProviderQuarter[];
 };
 
 /**

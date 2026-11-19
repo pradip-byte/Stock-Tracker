@@ -11,7 +11,7 @@ Stack: Next.js (App Router, TypeScript), Tailwind, Motion, lightweight-charts, S
 |---|---|---|
 | 0 | Design system, dashboard and stock pages | Done |
 | 1 | Schema, provider, backfill, jobs, technical signals and score | Done |
-| 2 | Result dates, quarterly results, fundamentals, event score | Not started |
+| 2 | Result dates, quarterly results, fundamentals, event score | Done (Yahoo only, see limits below) |
 | 3 | Verdicts, reward/risk, backtest | Not started |
 | 4 | External signals via Claude | Not started |
 
@@ -27,7 +27,8 @@ cp .env.example .env.local     # then fill in the values below
 npm run db:push                # apply supabase/migrations to your database
 npm run seed                   # Nifty 200 + Nifty 50 / India VIX rows + your allowed email
 npm run auth:set-password      # create your sign-in account (hidden prompt)
-npm run backfill               # 10 years of daily candles per stock, ~1 stock/second
+npm run backfill               # 10 years of daily candles per stock, ~5 seconds each
+npm run fundamentals           # result dates, quarterly results, ratios, event scores
 npm run dev                    # http://localhost:3000
 ```
 
@@ -53,6 +54,8 @@ npm run dev                    # http://localhost:3000
 | `npm run seed` | Upserts the Nifty 200 list from `data/nifty200.csv` (existing rows are left alone) and registers `ALLOWED_EMAIL` |
 | `npm run auth:set-password` | Creates the account for `ALLOWED_EMAIL` or resets its password |
 | `npm run backfill` | Backfills every stock that is not done yet. Resumable: stop it and run again. `-- --symbol TCS`, `-- --force`, `-- --years 5` |
+| `npm run fundamentals` | Refreshes results and fundamentals for stocks not updated in the last 20 hours. `-- --force` for all |
+| `npm run typecheck` | Type-checks from scratch (no incremental cache, which can hide errors) |
 
 To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file from
 `https://nsearchives.nseindia.com/content/indices/ind_nifty200list.csv` and run `npm run seed`.
@@ -76,8 +79,22 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   - `GET /api/cron/quotes`: refreshes `quotes_latest`. Does nothing outside 09:15-15:30 IST, Mon-Fri.
   - `GET /api/cron/eod`: after 15:45 IST, appends candles and recomputes indicators and scores.
     Works in 45-second batches and resumes on the next call.
-  - Both require the `x-cron-secret` header. Provider calls retry three times with backoff; a symbol that
+  - `GET /api/cron/fundamentals`: daily refresh of result dates, quarterly results, ratios and event scores,
+    also in 45-second batches.
+  - All require the `x-cron-secret` header. Provider calls retry three times with backoff; a symbol that
     still fails is recorded and the job carries on.
+- **Results and the event score** (`src/lib/events.ts`). For each stock: next result date, recent quarters
+  (revenue, net profit, YoY and QoQ growth, net margin), P/E, ROE, debt/equity, and the price move on the
+  first session and first five sessions after each past result. The event score (0-100, starts at 50) weighs
+  YoY revenue and profit growth, the quarter-on-quarter revenue run, margin direction, past post-result
+  reactions and EPS beats. With fewer than two usable quarters the score is left empty.
+  **Limits of the current source (Yahoo):**
+  - Only the latest 4-7 quarters are available, sometimes with gaps, so "last 8 quarters" fills in over time
+    as new results are stored. YoY appears only where the year-ago quarter exists.
+  - The next result date is whatever Yahoo publishes. A date already in the past is treated as unknown.
+    Dates Yahoo marks as estimates are labelled "est.".
+  - NSE/BSE announcement feeds are **not** wired in: their result endpoints are not open APIs.
+    `MarketDataProvider.getEarnings` is the single place to add an exchange or licensed source.
 - **Freshness.** Every panel carries a stamp. Quotes older than 20 minutes in market hours, or data from
   before the latest expected session, are flagged "Stale" in amber. Exchange holidays are not known to the
   app, so data is flagged stale on a holiday rather than presented as current.
@@ -90,8 +107,8 @@ Vercel Hobby cron runs once a day at most, so Supabase calls the routes instead.
 2. Open `supabase/cron.sql.example`, replace `https://YOUR-APP.vercel.app` and `YOUR_CRON_SECRET`.
 3. Paste it into the Supabase SQL editor and run it. Do not commit the filled-in copy.
 
-The file schedules quotes every 15 minutes in market hours, the EOD batches after the close, and a daily
-clean-up of old `job_runs` rows. It also lists the queries to inspect scheduled jobs and recent HTTP responses.
+The file schedules quotes every 15 minutes in market hours, the EOD batches after the close, the daily
+results and fundamentals refresh, and a daily clean-up of old `job_runs` rows. It also lists the queries to inspect scheduled jobs and recent HTTP responses.
 
 ## Deploying on Vercel (GitHub auto-deploy)
 

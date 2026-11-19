@@ -1,4 +1,6 @@
 /** Read side. Uses the signed-in user's client, so RLS decides what comes back. */
+import { analyseQuarters } from "./events";
+import { todayIST } from "./market";
 import { userDb } from "./supabase/server";
 import { INDEX_SYMBOLS, type Candle, type DashboardData, type JobRun, type Quotes, type StockDetail, type StockRow } from "./types";
 
@@ -44,6 +46,15 @@ function mapRow(r: any): StockRow {
     target: n(r.target),
     stop: n(r.stop),
     event: n(r.event),
+    eventReasons: Array.isArray(r.event_reasons) ? r.event_reasons : [],
+    nextResultDate: r.next_result_date,
+    nextResultEstimate: !!r.next_result_is_estimate,
+    nextResultSource: r.next_result_source,
+    pe: n(r.pe),
+    roe: n(r.roe),
+    debtToEquity: n(r.debt_to_equity),
+    profitMargin: n(r.profit_margin),
+    fundamentalsAt: r.fundamentals_at,
     external: n(r.external),
     overall: n(r.overall),
     shortVerdict: r.short_verdict,
@@ -78,11 +89,21 @@ export async function getDashboard(): Promise<DashboardData> {
   const byTech = (a: StockRow, b: StockRow) => (b.tech ?? 0) - (a.tech ?? 0);
 
   const shortSetups = ready.filter((r) => r.bounce || r.trend).sort((a, b) => Number(b.bounce) - Number(a.bounce) || byTech(a, b)).slice(0, 10);
-  // Interim definition until fundamentals arrive in Phase 2: established uptrends near their highs
+  // Until the Phase 3 verdict exists: an intact uptrend plus a scored results record, ranked on both
+  const blend = (r: StockRow) => (r.tech ?? 0) * 0.5 + (r.event ?? 0) * 0.5;
   const longCandidates = ready
-    .filter((r) => r.trend && !r.breakdown && (r.distHi52 ?? -100) >= -15)
-    .sort(byTech)
+    .filter((r) => r.trend && !r.breakdown && r.event != null)
+    .sort((a, b) => blend(b) - blend(a))
     .slice(0, 6);
+  const today = todayIST();
+  const horizon = new Date(`${today}T00:00:00Z`);
+  horizon.setUTCDate(horizon.getUTCDate() + 30);
+  const until = horizon.toISOString().slice(0, 10);
+  const results = ready
+    .filter((r) => r.nextResultDate && r.nextResultDate >= today && r.nextResultDate <= until)
+    .sort((a, b) => a.nextResultDate!.localeCompare(b.nextResultDate!))
+    .map((r) => ({ symbol: r.symbol, date: r.nextResultDate!, estimate: r.nextResultEstimate }));
+  const fundamentalsAt = ready.reduce<string | null>((m, r) => (r.fundamentalsAt && (!m || r.fundamentalsAt < m) ? r.fundamentalsAt : m), null);
   const highRisk = ready
     .filter((r) => r.risk === "High" && (r.rr ?? 0) >= 1.5 && !r.breakdown)
     .sort((a, b) => (b.rr ?? 0) - (a.rr ?? 0))
@@ -95,6 +116,15 @@ export async function getDashboard(): Promise<DashboardData> {
     rows: Object.fromEntries(all.map((r) => [r.symbol, r])),
     niftySeries: (nifty.data ?? []).map((c) => ({ date: c.date, close: Number(c.close) })).reverse(),
     eodDate,
+    today,
+    fundamentalsAt,
+    results,
+    resultsUnknown: ready.filter((r) => !r.nextResultDate || r.nextResultDate < today).length,
+    resultsLater: ready
+      .filter((r) => r.nextResultDate && r.nextResultDate > until)
+      .sort((a, b) => a.nextResultDate!.localeCompare(b.nextResultDate!))
+      .slice(0, 8)
+      .map((r) => ({ symbol: r.symbol, date: r.nextResultDate!, estimate: r.nextResultEstimate })),
     shortSetups: shortSetups.map((r) => r.symbol),
     longCandidates: longCandidates.map((r) => r.symbol),
     highRisk: highRisk.map((r) => r.symbol),
@@ -132,7 +162,25 @@ export async function getStockDetail(symbol: string): Promise<StockDetail | null
     }
     if (!data || data.length < 1000) break;
   }
-  return { row: mapRow(r), candles };
+  const { data: eq } = await db
+    .from("earnings")
+    .select("period_end,revenue,net_profit,eps,eps_estimate,reported_at,reaction_1d,reaction_5d")
+    .eq("symbol", symbol)
+    .order("period_end", { ascending: true })
+    .limit(40);
+  const quarters = analyseQuarters(
+    (eq ?? []).map((q) => ({
+      periodEnd: q.period_end,
+      revenue: n(q.revenue),
+      netProfit: n(q.net_profit),
+      eps: n(q.eps),
+      epsEstimate: n(q.eps_estimate),
+      reportedAt: q.reported_at,
+      reaction1d: n(q.reaction_1d),
+      reaction5d: n(q.reaction_5d),
+    })),
+  ).slice(-8);
+  return { row: mapRow(r), candles, quarters, today: todayIST() };
 }
 
 export async function getJobRuns(limit = 60): Promise<JobRun[]> {

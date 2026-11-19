@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { extent, max } from "d3-array";
+import { extent } from "d3-array";
 import { scaleBand, scaleLinear } from "d3-scale";
 import { area, curveMonotoneX, line } from "d3-shape";
 import { motion } from "motion/react";
@@ -182,7 +182,11 @@ export function RadialGauge({
   );
 }
 
-/** One quarterly series. Bars grow from the baseline; the latest quarter is highlighted. */
+/**
+ * One quarterly series. Bars grow from the zero line (losses hang below it),
+ * the latest quarter is highlighted, and YoY growth sits under each label.
+ * A quarter the provider does not have is drawn as an empty slot, not a zero.
+ */
 export function QuarterBars({
   quarters,
   field,
@@ -193,46 +197,61 @@ export function QuarterBars({
   delay?: number;
 }) {
   const W = 420;
-  const H = 118;
+  const H = 124;
   const top = 16;
   const bottom = 30;
+  const vals = quarters.map((q) => q[field]).filter((v): v is number => v != null);
+  const hi = Math.max(0, ...vals);
+  const lo = Math.min(0, ...vals);
   const x = scaleBand(quarters.map((q) => q.label), [0, W]).paddingInner(0.28).paddingOuter(0.1);
-  const y = scaleLinear([0, max(quarters, (q) => q[field]) ?? 1], [H - bottom, top]);
+  const y = scaleLinear([lo, hi || 1], [H - bottom - (lo < 0 ? 10 : 0), top]);
+  const zero = y(0);
   const yoyKey = field === "revenue" ? "revenueYoY" : "profitYoY";
+  const lastIdx = quarters.reduce((m, q, i) => (q[field] != null ? i : m), -1);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full" role="img" aria-label={`Quarterly ${field}`}>
-      <line x1={0} x2={W} y1={H - bottom} y2={H - bottom} className="stroke-line" />
+      <line x1={0} x2={W} y1={zero} y2={zero} className="stroke-line" />
       {quarters.map((q, i) => {
         const bx = x(q.label) ?? 0;
         const bw = x.bandwidth();
-        const by = y(q[field]);
-        const last = i === quarters.length - 1;
+        const v = q[field];
         const yoy = q[yoyKey];
         const d = delay + i * 0.045;
+        const neg = v != null && v < 0;
+        const by = v == null ? zero : Math.min(y(v), zero);
+        const bh = v == null ? 0 : Math.abs(y(v) - zero);
         return (
           <g key={q.label}>
-            <motion.rect
-              x={bx}
-              y={by}
-              width={bw}
-              height={H - bottom - by}
-              className={last ? "fill-amber" : "fill-steel/55"}
-              style={{ transformBox: "fill-box", originY: 1 }}
-              initial={{ scaleY: 0 }}
-              animate={{ scaleY: 1 }}
-              transition={{ duration: dur.md, ease: ease.out, delay: d }}
-            />
-            <motion.text
-              x={bx + bw / 2}
-              y={by - 4}
-              textAnchor="middle"
-              className={clsx("num text-[9px]", last ? "fill-ink" : "fill-steel")}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: dur.sm, delay: d + 0.2 }}
-            >
-              {crore(q[field])}
-            </motion.text>
+            {v == null ? (
+              <text x={bx + bw / 2} y={zero - 6} textAnchor="middle" className="num fill-steel text-[8px]">
+                n/a
+              </text>
+            ) : (
+              <>
+                <motion.rect
+                  x={bx}
+                  y={by}
+                  width={bw}
+                  height={Math.max(bh, 1)}
+                  className={i === lastIdx ? "fill-amber" : "fill-steel/55"}
+                  style={{ transformBox: "fill-box", originY: neg ? 0 : 1 }}
+                  initial={{ scaleY: 0 }}
+                  animate={{ scaleY: 1 }}
+                  transition={{ duration: dur.md, ease: ease.out, delay: d }}
+                />
+                <motion.text
+                  x={bx + bw / 2}
+                  y={neg ? by + bh + 9 : by - 4}
+                  textAnchor="middle"
+                  className={clsx("num text-[9px]", i === lastIdx ? "fill-ink" : "fill-steel")}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: dur.sm, delay: d + 0.2 }}
+                >
+                  {crore(v)}
+                </motion.text>
+              </>
+            )}
             <text x={bx + bw / 2} y={H - bottom + 11} textAnchor="middle" className="num fill-steel text-[8px]">
               {q.label.replace(" FY", "'")}
             </text>
@@ -240,12 +259,9 @@ export function QuarterBars({
               x={bx + bw / 2}
               y={H - bottom + 23}
               textAnchor="middle"
-              className={clsx(
-                "num text-[8.5px]",
-                yoy == null ? "fill-line" : yoy >= 0 ? "fill-gain" : "fill-loss",
-              )}
+              className={clsx("num text-[8.5px]", yoy == null ? "fill-steel/60" : yoy >= 0 ? "fill-gain" : "fill-loss")}
             >
-              {yoy == null ? "·" : pct(yoy, 1)}
+              {yoy == null ? "–" : pct(yoy, 1)}
             </text>
           </g>
         );

@@ -6,7 +6,7 @@ import { dayDiff, shortDate } from "@/lib/format";
 import { dur, ease, seq } from "../motion/tokens";
 import { StockLink, SymbolMark } from "../shell/StockLink";
 
-type Item = { symbol: string; date: string; source: "NSE" | "Yahoo" };
+type Item = { symbol: string; date: string; estimate: boolean };
 
 const LANE = 30;
 const SPAN = 30;
@@ -16,10 +16,12 @@ export function ResultsTimeline({
   items,
   unknown,
   today,
+  later,
 }: {
   items: Item[];
-  unknown: string[];
+  unknown: number;
   today: string;
+  later: Item[];
 }) {
   // Greedy lane packing so chips on nearby dates do not overlap.
   const laneEnd: number[] = [];
@@ -76,15 +78,34 @@ export function ResultsTimeline({
               className="metal-raised relative ml-px flex h-6 items-center gap-2 rounded-sm px-2 hover:text-amber"
             >
               <SymbolMark symbol={it.symbol} slot="results" className="label text-[11px]" />
-              <span className="num whitespace-nowrap text-[10px] text-steel">{shortDate(it.date)}</span>
+              <span className="num whitespace-nowrap text-[10px] text-steel">
+                {shortDate(it.date)}
+                {it.estimate && " est."}
+              </span>
             </StockLink>
           </motion.div>
         ))}
       </div>
+      {later.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <span className="label mr-1 text-[10px] text-steel">{items.length === 0 ? "Nothing inside 30 days. Next known" : "After the window"}</span>
+          {later.map((it) => (
+            <StockLink key={it.symbol} symbol={it.symbol} slot="results" className="metal-raised flex h-6 items-center gap-2 rounded-sm px-2 hover:text-amber">
+              <SymbolMark symbol={it.symbol} slot="results" className="label text-[11px]" />
+              <span className="num whitespace-nowrap text-[10px] text-steel">
+                {shortDate(it.date)}
+                {it.estimate && " est."}
+              </span>
+            </StockLink>
+          ))}
+        </div>
+      )}
       <p className="num mt-3 border-t border-line pt-2.5 text-[10px] uppercase leading-relaxed tracking-wider text-steel">
-        <span className="text-ink">Date unknown ({unknown.length})</span>
+        <span className="text-ink">{items.length} dated</span>
         <span className="mx-2 text-line">/</span>
-        {unknown.join("  ·  ")}
+        <span className={unknown ? "text-amber" : undefined}>{unknown} with no known upcoming date</span>
+        <span className="mx-2 text-line">/</span>
+        "est." = provider estimate, not a company announcement
       </p>
     </div>
   );

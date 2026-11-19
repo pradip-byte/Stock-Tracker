@@ -4,8 +4,10 @@ import clsx from "clsx";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { changePct, inr, pct, toneOf } from "@/lib/format";
+import { fmtIST } from "@/lib/market";
 import { INDEX_SYMBOLS, type DashboardData, type StockRow } from "@/lib/types";
 import { LineReveal, RangeSlider, Sparkline } from "../charts/primitives";
+import { ResultsTimeline } from "../charts/ResultsTimeline";
 import { SectorHeatmap } from "../charts/SectorHeatmap";
 import { Odometer } from "../motion/Odometer";
 import { Rise, TypeIn } from "../motion/primitives";
@@ -280,7 +282,7 @@ function LongTerm({ data }: { data: DashboardData }) {
       index={4}
       className="col-span-12 md:col-span-6 xl:col-span-4"
       title="Long-term candidates"
-      right={<Freshness mode="text" label="Trend only until Phase 2" />}
+      right={<Freshness mode="text" label="Uptrend + results record" />}
       bodyClassName=""
     >
       {data.longCandidates.map((s, i) => {
@@ -308,15 +310,21 @@ function LongTerm({ data }: { data: DashboardData }) {
                 </>
               )}
             </span>
-            <span className="w-12 text-right">
-              <span className="display block text-3xl">{r.tech ?? "—"}</span>
-              <span className="label text-[9px] text-steel">Tech</span>
+            <span className="flex gap-3 text-right">
+              <span className="w-10">
+                <span className="display block text-3xl">{r.tech ?? "—"}</span>
+                <span className="label text-[9px] text-steel">Tech</span>
+              </span>
+              <span className="w-10">
+                <span className="display block text-3xl text-amber">{r.event ?? "—"}</span>
+                <span className="label text-[9px] text-steel">Event</span>
+              </span>
             </span>
           </StockLink>
         );
       })}
       {data.longCandidates.length === 0 && (
-        <p className="p-4 text-[12.5px] text-steel">No established uptrends within 15% of a 52-week high.</p>
+        <p className="p-4 text-[12.5px] text-steel">No stock currently combines an intact uptrend with a scored results record.</p>
       )}
     </Card>
   );
@@ -429,8 +437,14 @@ export function Dashboard({ data }: { data: DashboardData }) {
       <div className="grid grid-cols-12 gap-3">
         <Setups data={data} />
         <LongTerm data={data} />
-        <Card index={5} className="col-span-12 xl:col-span-7" title="Results in the next 30 days">
-          <Pending phase={2} what="Result dates from NSE/BSE announcements with a Yahoo fallback, laid out on a 30-day timeline. Unknown dates will be shown as unknown." />
+        <Card
+          index={5}
+          className="col-span-12 xl:col-span-7"
+          title="Results in the next 30 days"
+          right={<Freshness mode="text" label={data.fundamentalsAt ? `Yahoo / checked ${fmtIST(data.fundamentalsAt)}` : "Yahoo / not fetched yet"} />}
+          bodyClassName="overflow-x-auto p-3.5 [&>*]:min-w-[680px]"
+        >
+          <ResultsTimeline items={data.results} unknown={data.resultsUnknown} today={data.today} later={data.resultsLater} />
         </Card>
         <HighRisk data={data} />
         <Card index={7} className="col-span-12 xl:col-span-8" title="Sector heatmap" right={<Freshness mode="quote" />}>
