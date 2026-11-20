@@ -16,6 +16,7 @@ import { StockLink } from "./StockLink";
 const NAV = [
   { label: "Dashboard", href: "/" },
   { label: "Stocks", href: "/stocks" },
+  { label: "Scoreboard", href: "/scoreboard" },
   { label: "Admin", href: "/admin" },
 ] as const;
 

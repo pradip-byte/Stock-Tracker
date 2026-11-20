@@ -1,6 +1,7 @@
 /** Read side. Uses the signed-in user's client, so RLS decides what comes back. */
 import { analyseQuarters } from "./events";
 import { todayIST } from "./market";
+import { breakdown, mapTrade, niftyPnl, pnlAt, summarise, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
 import { userDb } from "./supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -322,4 +323,74 @@ export async function getJobRuns(limit = 60): Promise<JobRun[]> {
   const db = await userDb();
   const { data } = await db.from("job_runs").select("*").order("started_at", { ascending: false }).limit(limit);
   return (data ?? []) as JobRun[];
+}
+
+// ───────────────────────── paper trading ─────────────────────────
+
+export type PaperBySymbol = Record<string, { ST?: PaperTrade; LT?: PaperTrade }>;
+
+/** The user's own pending, open and closing paper trades, keyed by symbol and column. */
+export async function getMyActivePaper(): Promise<PaperBySymbol> {
+  const db = await userDb();
+  const { data } = await db.from("paper_trades").select("*").eq("book", "mine").in("status", ["pending", "open", "closing"]).limit(2000);
+  const out: PaperBySymbol = {};
+  for (const r of data ?? []) {
+    const t = mapTrade(r);
+    (out[t.symbol] ??= {})[t.horizon] = t;
+  }
+  return out;
+}
+
+export type Scoreboard = {
+  book: PaperBook;
+  overall: PaperStats;
+  byHorizon: PaperStats[];
+  bySignal: PaperStats[];
+  byEntry: PaperStats[];
+  byRegime: PaperStats[];
+  recent: MarkedTrade[];
+  pending: number;
+};
+
+/** Every filled paper trade marked to the latest stored quote, summarised for one book. */
+export async function getScoreboards(): Promise<{ boards: Scoreboard[]; quotesAt: string | null }> {
+  const db = await userDb();
+  const trades: PaperTrade[] = [];
+  for (let from = 0; from < 20000; from += 1000) {
+    const { data } = await db.from("paper_trades").select("*").order("id", { ascending: false }).range(from, from + 999);
+    trades.push(...(data ?? []).map(mapTrade));
+    if (!data || data.length < 1000) break;
+  }
+  const quotes = await getQuotes();
+  const nifty = quotes[INDEX_SYMBOLS[0]]?.price ?? null;
+  let quotesAt: string | null = null;
+  for (const q of Object.values(quotes)) if (q.marketTime && (!quotesAt || q.marketTime > quotesAt)) quotesAt = q.marketTime;
+
+  const boards = (["mine", "shadow"] as const).map((book): Scoreboard => {
+    const mine = trades.filter((t) => t.book === book);
+    const marked: MarkedTrade[] = [];
+    for (const t of mine) {
+      if (t.entryPrice == null || t.qty == null) continue;
+      if (t.status === "closed" && t.pnlInr != null && t.pnlPct != null) {
+        marked.push({ trade: t, pnlInr: t.pnlInr, pnlPct: t.pnlPct, niftyInr: niftyPnl(t, t.niftyExit), closed: true });
+      } else if (t.status === "open" || t.status === "closing") {
+        const price = quotes[t.symbol]?.price;
+        if (price == null) continue;
+        const p = pnlAt({ amount: t.amount, qty: t.qty, entryPrice: t.entryPrice, costPct: t.costPct }, price);
+        marked.push({ trade: t, pnlInr: p.inr, pnlPct: p.pct, niftyInr: niftyPnl(t, nifty), closed: false });
+      }
+    }
+    const regimeOf = (t: PaperTrade) => t.context.regime ?? (t.context.marketUp == null ? "Unknown" : t.context.marketUp ? "Nifty above 200 DMA" : "Nifty below 200 DMA");
+    return {
+      book,
+      overall: summarise("All trades", marked),
+      byHorizon: breakdown(marked, (t) => (t.horizon === "ST" ? "Short term" : "Long term")),
+      bySignal: breakdown(marked, (t) => t.context.signal ?? "No signal"),
+      byEntry: breakdown(marked, (t) => t.context.entryRating ?? "Unknown"),
+      byRegime: breakdown(marked, regimeOf),
+      recent: marked.slice(0, 40),
+      pending: mine.filter((t) => t.status === "pending").length,
+    };
+  });
+  return { boards, quotesAt };
 }

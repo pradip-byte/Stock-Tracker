@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { addStock, refreshQuotes, runEod, type JobResult } from "@/lib/jobs/core";
 import { researchStock } from "@/lib/jobs/external";
+import { requestClose, requestTrade } from "@/lib/jobs/paper";
+import type { PaperHorizon } from "@/lib/paper";
 import { adminDb } from "@/lib/supabase/admin";
 import { allowedEmail, requireUser, userDb } from "@/lib/supabase/server";
 
@@ -59,5 +61,25 @@ export async function refreshExternalAction(symbol: string): Promise<{ ok: boole
   await requireUser();
   const res = await researchStock(symbol, "manual");
   revalidatePath("/", "layout");
+  return res;
+}
+
+/** Open a paper trade of `amount` rupees. It fills at the next quote (or the next open), never at the price on screen. */
+export async function paperBuyAction(symbol: string, horizon: PaperHorizon, amount: number): Promise<{ ok: boolean; error?: string }> {
+  await requireUser();
+  const res = await requestTrade("mine", horizon, symbol, Number(amount));
+  revalidatePath("/stocks");
+  revalidatePath("/scoreboard");
+  return { ok: res.ok, error: res.error };
+}
+
+/** Close an open paper trade at the next quote, or cancel one that has not filled yet. Only the user's own trades. */
+export async function paperCloseAction(id: number): Promise<{ ok: boolean; error?: string }> {
+  await requireUser();
+  const { data } = await adminDb().from("paper_trades").select("book").eq("id", id).maybeSingle();
+  if (data?.book !== "mine") return { ok: false, error: "Trade not found." };
+  const res = await requestClose(id, "manual");
+  revalidatePath("/stocks");
+  revalidatePath("/scoreboard");
   return res;
 }

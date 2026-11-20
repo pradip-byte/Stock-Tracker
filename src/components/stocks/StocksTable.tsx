@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useMemo, useState, useTransition } from "react";
 import { setWatchlistAction } from "@/app/actions";
 import { changePct, dayDiff, inr, pct, shortDate, toneOf } from "@/lib/format";
+import type { PaperBySymbol } from "@/lib/data";
 import type { StockRow } from "@/lib/types";
 import { TypeIn } from "../motion/primitives";
 import { useQuote } from "../shell/quotes";
@@ -11,13 +12,14 @@ import { StockLink, SymbolMark } from "../shell/StockLink";
 import { Card, EntryTag, SignalTag, VerdictTag } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 import { Segmented } from "../ui/Segmented";
+import { PaperCell } from "./PaperCell";
 
 const COLS =
-  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_92px_88px_92px_100px] items-center gap-3 px-3.5";
-const FILTERS = ["All", "Watchlist", "Signals", "Results in 30D", "Added by me"] as const;
+  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_92px_88px_92px_100px_172px_172px] items-center gap-3 px-3.5";
+const FILTERS = ["All", "Watchlist", "Signals", "Paper trades", "Results in 30D", "Added by me"] as const;
 type SortKey = "symbol" | "tech" | "chg" | "event";
 
-function Row({ r, today }: { r: StockRow; today: string }) {
+function Row({ r, today, paper }: { r: StockRow; today: string; paper?: PaperBySymbol[string] }) {
   const q = useQuote(r.symbol);
   const price = q?.price ?? r.price;
   const ch = q?.prevClose ? changePct(q.price, q.prevClose) : null;
@@ -80,12 +82,14 @@ function Row({ r, today }: { r: StockRow; today: string }) {
       <span className={clsx("num justify-self-end text-[11px]", soon ? "text-amber" : "text-steel")}>
         {upcoming ? `${shortDate(r.nextResultDate!)}${r.nextResultEstimate ? " est." : ""}` : "unknown"}
       </span>
+      <PaperCell symbol={r.symbol} horizon="ST" trade={paper?.ST} price={price} />
+      <PaperCell symbol={r.symbol} horizon="LT" trade={paper?.LT} price={price} />
     </div>
   );
 }
 
 /** Every tracked stock, with search, filters, sorting and the watchlist toggle. */
-export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }) {
+export function StocksTable({ rows, today, paper }: { rows: StockRow[]; today: string; paper: PaperBySymbol }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [sort, setSort] = useState<SortKey>("symbol");
@@ -97,6 +101,7 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
       if (q && !r.symbol.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q) && !(r.sector ?? "").toLowerCase().includes(q)) return false;
       if (filter === "Watchlist") return r.inWatchlist;
       if (filter === "Signals") return r.signal != null;
+      if (filter === "Paper trades") return paper[r.symbol] != null;
       if (filter === "Added by me") return r.source === "user";
       if (filter === "Results in 30D") return r.nextResultDate != null && r.nextResultDate >= today && dayDiff(today, r.nextResultDate) <= 30;
       return true;
@@ -108,7 +113,7 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
       list.sort((a, b) => c(b) - c(a));
     } else list.sort((a, b) => a.symbol.localeCompare(b.symbol));
     return list;
-  }, [rows, query, filter, sort, today]);
+  }, [rows, query, filter, sort, today, paper]);
 
   const head = (label: string, key?: SortKey, end = true) => (
     <span className={end ? "justify-self-end" : undefined}>
@@ -145,7 +150,7 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
         right={<Freshness mode="eod" at={eodDate} />}
         bodyClassName="overflow-x-auto"
       >
-        <div className="min-w-[1400px]">
+        <div className="min-w-[1770px]">
           <div className={clsx(COLS, "label h-8 border-b border-line text-[10px] text-steel")}>
             <span />
             {head("Stock", "symbol", false)}
@@ -161,15 +166,19 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
             {head("Entry")}
             {head("Long term")}
             {head("Next result")}
+            {head("Paper ST")}
+            {head("Paper LT")}
           </div>
           {shown.map((r) => (
-            <Row key={r.symbol} r={r} today={today} />
+            <Row key={r.symbol} r={r} today={today} paper={paper[r.symbol]} />
           ))}
           {shown.length === 0 && <p className="p-4 text-[12.5px] text-steel">Nothing matches.</p>}
         </div>
       </Card>
       <p className="text-[11px] text-steel">
-        Add a stock with the button in the top bar. To remove one, open it and use Remove; its candles and scores are deleted with it.
+        Paper trades are pretend trades for learning: no order is placed anywhere. A paper buy fills at the next quote, or at the next
+        open if the market is closed, and returns are shown after the cost setting. Short-term trades close at their target, their stop or
+        after 20 sessions. Add a stock with the button in the top bar. To remove one, open it and use Remove; its candles and scores are deleted with it.
       </p>
     </div>
   );

@@ -46,6 +46,7 @@ npm run dev                    # http://localhost:3000
 | `ALLOWED_EMAIL` | sign-in, route guard, seed | The only email that can sign in |
 | `EXTERNAL_SIGNALS_MODEL` | AI read (Phase 4) | Claude model for the AI read. Optional; defaults to `claude-haiku-5-5` |
 | `TRADE_COST_PCT` | Optional. Round-trip trading cost in percent used by the signal research and paper trades. Default 0.25. |
+| `SHADOW_TRADE_INR` | Optional. Notional rupee size of each automatic shadow paper trade. Default 100000. |
 | `ANTHROPIC_WORKSPACE_ID` | AI read (Phase 4) | Only needed when the API key is not tied to a single workspace; Anthropic then requires the workspace ID on every request |
 | `ANTHROPIC_API_KEY` | AI read (Phase 4) | From console.anthropic.com. Without it the AI read is simply unavailable; everything else works |
 
@@ -120,6 +121,24 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   (the same measure for any day in the same history) so a signal can be judged against doing nothing special.
   Returns are close-to-close with no costs, taxes or slippage. Results are stored per stock, per sector and
   for all stocks; a stock with fewer than 8 past cases falls back to its sector, then to all stocks.
+- **Paper trading** (`src/lib/jobs/paper.ts`, table `paper_trades`). Pretend trades for learning; no order is
+  placed anywhere.
+  - *My trades:* the stocks list has "Paper ST" and "Paper LT" columns. A paper buy takes an amount in rupees
+    and is stored as pending. It fills at the first quote stamped after the request, or at that session's
+    open if the request came while the market was closed, so it can never fill at a past price. The verdicts,
+    scores, entry rating, signal, momentum rank and market regime at the time are stored with it.
+  - *Exits:* a short-term trade closes at its target, at its stop, or at the close of its 20th session. The
+    end-of-day pass tests each completed bar, stop first, so a day that touched both counts as a loss. A
+    long-term trade stays open until you close it; it is flagged when the long-term verdict turns Avoid.
+  - *Costs:* `TRADE_COST_PCT` (default 0.25% round trip), half on entry and half on exit.
+  - *Shadow portfolio:* after each end-of-day run, a notional trade (`SHADOW_TRADE_INR`, default 100000) is
+    opened for every stock that newly became short-term Favourable with a Good entry, and for every stock
+    that newly became long-term Favourable. It fills at the next open. Shadow long-term trades close when
+    the long-term verdict turns Avoid.
+  - *Scoreboard* (`/scoreboard`): my trades and the shadow portfolio separately, with win rate, average win
+    and loss, expectancy, total return and the same money in Nifty 50 over the same dates, broken down by
+    horizon, signal, entry rating and market regime. Fewer than 30 closed trades shows "too few trades to
+    judge".
 - **Verdicts** (`src/lib/verdict.ts`). Short term (days to weeks) and long term (1 year+), each starting at 50:
   - *Short:* technical score (0.4 points per point from 50), reward-to-risk (target = nearest resistance,
     stop = nearest support less half an ATR), 12-1 month momentum rank (top fifth +4, bottom fifth -4), a

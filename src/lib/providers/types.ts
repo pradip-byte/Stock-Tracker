@@ -6,6 +6,7 @@ export type ProviderQuote = {
   prevClose: number | null;
   dayHigh: number | null;
   dayLow: number | null;
+  dayOpen: number | null;
   volume: number | null;
   marketTime: string | null; // ISO
   name: string | null;

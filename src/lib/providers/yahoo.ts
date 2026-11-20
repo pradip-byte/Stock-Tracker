@@ -51,6 +51,7 @@ export class YahooProvider implements MarketDataProvider {
           prevClose: num(q.regularMarketPreviousClose),
           dayHigh: num(q.regularMarketDayHigh),
           dayLow: num(q.regularMarketDayLow),
+          dayOpen: num(q.regularMarketOpen),
           volume: num(q.regularMarketVolume),
           marketTime: t instanceof Date ? t.toISOString() : typeof t === "number" ? new Date(t * 1000).toISOString() : null,
           name: q.longName ?? q.shortName ?? null,

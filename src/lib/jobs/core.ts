@@ -10,6 +10,7 @@ import { dayDiff } from "../format";
 import { isAfterClose, isMarketOpen, istParts, todayIST } from "../market";
 import { getProvider } from "../providers";
 import { entryPlan, heldBreakout } from "../entry";
+import { openShadowTrades, processPaper } from "./paper";
 import { momentum12, percentileRank, returnOver } from "../factors";
 import { computeSeries, snapshotAt, technicalScore } from "../signals";
 import { adminDb } from "../supabase/admin";
@@ -354,6 +355,7 @@ export async function refreshQuotes(opts: { force?: boolean } = {}): Promise<Job
         prev_close: q.prevClose,
         day_high: q.dayHigh,
         day_low: q.dayLow,
+        day_open: q.dayOpen,
         volume: q.volume,
         market_time: q.marketTime,
         fetched_at: now,
@@ -367,7 +369,14 @@ export async function refreshQuotes(opts: { force?: boolean } = {}): Promise<Job
       .filter((s) => !got.has(s))
       .map((symbol) => ({ symbol, error: "no quote returned" }));
     const status = failures.length ? (rows.length ? "partial" : "error") : "ok";
-    await finishJob(db, id, { status, ok: rows.length, failures });
+    // paper trades fill and exit on fresh quotes; a failure here must not fail the quote job
+    let paper: object | undefined;
+    try {
+      paper = await processPaper("quotes", db);
+    } catch (e) {
+      paper = { error: msg(e) };
+    }
+    await finishJob(db, id, { status, ok: rows.length, failures, detail: { paper } });
     return { status, ok: rows.length, failed: failures.length };
   } catch (e) {
     await finishJob(db, id, { status: "error", error: msg(e) });
@@ -445,7 +454,19 @@ export async function runEod(opts: { force?: boolean; budgetMs?: number } = {}):
     const detail = { remaining, total: todo.length };
     await finishJob(db, id, { status, ok, failures, detail });
     // once every stock is done, record the closing quotes too
-    if (remaining === 0 && todo.length > 0) await refreshQuotes({ force: true });
+    if (remaining === 0 && todo.length > 0) {
+      await refreshQuotes({ force: true });
+      // on a finished session: paper exits from the day's bars, then new shadow trades for tomorrow's open
+      if (final) {
+        try {
+          const paper = await processPaper("eod", db);
+          const shadow = await openShadowTrades(db);
+          await db.from("job_runs").insert({ job: "paper", status: "ok", finished_at: new Date().toISOString(), ok_count: paper.filled + paper.closed + shadow.st.length + shadow.lt.length, fail_count: 0, detail: { ...paper, shadowST: shadow.st, shadowLT: shadow.lt } });
+        } catch (e) {
+          await db.from("job_runs").insert({ job: "paper", status: "error", finished_at: new Date().toISOString(), error: msg(e) });
+        }
+      }
+    }
     return { status, ok, failed: failures.length, detail };
   } catch (e) {
     await finishJob(db, id, { status: "error", error: msg(e) });
