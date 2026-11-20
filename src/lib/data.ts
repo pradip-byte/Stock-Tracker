@@ -1,9 +1,22 @@
-/** Read side. Uses the signed-in user's client, so RLS decides what comes back. */
+/**
+ * Read side.
+ *
+ * Market data changes on a schedule (quotes every 15 minutes, everything else once
+ * a day), so the page loaders below are cached with `unstable_cache`. A cached
+ * function cannot read cookies, so it reads with the service client; each public
+ * loader first checks that the proxy verified the session for this request.
+ * Cron routes and server actions mark the tags stale when they change data:
+ *   "quotes"  the quotes job        "eod"  end-of-day, fundamentals, backtest, AI and macro jobs
+ * Data the user changes directly (paper trades, job history) is read live with
+ * the user's own client, so RLS applies there.
+ */
+import { unstable_cache } from "next/cache";
+import { adminDb } from "./supabase/admin";
 import { analyseQuarters } from "./events";
 import { MACRO_SERIES, type MacroEvent, type MacroPoint, type MacroView, type SectorMacroItem } from "./macro";
 import { todayIST } from "./market";
 import { breakdown, entryLabel, externalBand, limitStats, mapTrade, niftyPnl, pnlAt, summarise, type LimitStats, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
-import { userDb } from "./supabase/server";
+import { assertSignedIn, userDb } from "./supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   INDEX_SYMBOLS,
@@ -123,15 +136,21 @@ async function getBacktests(db: SupabaseClient, scope: "stock" | "sector" | "all
   }));
 }
 
-export async function getRows(): Promise<StockRow[]> {
-  const db = await userDb();
+const MARKET = { tags: ["eod", "quotes"], revalidate: 120 };
+
+export async function loadRows(db: SupabaseClient): Promise<StockRow[]> {
   const { data, error } = await db.from("stock_latest").select("*").eq("kind", "equity").order("symbol").limit(2000);
   if (error) throw new Error(`stock_latest: ${error.message}`);
   return (data ?? []).map(mapRow);
 }
 
-export async function getQuotes(): Promise<Quotes> {
-  const db = await userDb();
+const cachedRows = unstable_cache(() => loadRows(adminDb()), ["rows-v1"], MARKET);
+export async function getRows(): Promise<StockRow[]> {
+  await assertSignedIn();
+  return cachedRows();
+}
+
+export async function loadQuotes(db: SupabaseClient): Promise<Quotes> {
   const { data } = await db.from("quotes_latest").select("symbol,price,prev_close,market_time").limit(2000);
   const out: Quotes = {};
   for (const q of data ?? []) {
@@ -140,12 +159,18 @@ export async function getQuotes(): Promise<Quotes> {
   return out;
 }
 
-export async function getDashboard(): Promise<DashboardData> {
-  const db = await userDb();
-  const [all, nifty, signalBoard] = await Promise.all([
-    getRows(),
+const cachedQuotes = unstable_cache(() => loadQuotes(adminDb()), ["quotes-v1"], { tags: ["quotes"], revalidate: 60 });
+export async function getQuotes(): Promise<Quotes> {
+  await assertSignedIn();
+  return cachedQuotes();
+}
+
+export async function loadDashboard(db: SupabaseClient): Promise<DashboardData> {
+  const [all, nifty, signalBoard, macro] = await Promise.all([
+    loadRows(db),
     db.from("candles_daily").select("date,close").eq("symbol", INDEX_SYMBOLS[0]).order("date", { ascending: false }).limit(120),
     getBacktests(db, "all", "ALL"),
+    loadMacro(db),
   ]);
   const ready = all.filter((r) => r.backfillStatus === "done" && r.tech != null);
   const byTech = (a: StockRow, b: StockRow) => (b.tech ?? 0) - (a.tech ?? 0);
@@ -209,36 +234,57 @@ export async function getDashboard(): Promise<DashboardData> {
       trend: ready.filter((r) => r.trend).length,
       breakdown: ready.filter((r) => r.breakdown).length,
     },
-    macro: await getMacro(),
+    macro,
   };
 }
 
-export async function getStockDetail(symbol: string): Promise<StockDetail | null> {
-  const db = await userDb();
-  const { data: r, error } = await db.from("stock_latest").select("*").eq("symbol", symbol).eq("kind", "equity").maybeSingle();
-  if (error) throw new Error(`stock_latest: ${error.message}`);
-  if (!r) return null;
-  // PostgREST caps a response at 1000 rows, so page through the 10-year history
-  const candles: Candle[] = [];
-  for (let from = 0; from < 6000; from += 1000) {
-    const { data, error: e } = await db
+const cachedDashboard = unstable_cache(() => loadDashboard(adminDb()), ["dashboard-v1"], MARKET);
+export async function getDashboard(): Promise<DashboardData> {
+  await assertSignedIn();
+  return cachedDashboard();
+}
+
+/** Full daily history, oldest first. PostgREST caps a response at 1000 rows, so the pages are fetched side by side. */
+export async function loadCandles(db: SupabaseClient, symbol: string): Promise<Candle[]> {
+  const page = async (from: number) => {
+    const { data, error } = await db
       .from("candles_daily")
       .select("date,open,high,low,close,volume")
       .eq("symbol", symbol)
       .order("date", { ascending: true })
       .range(from, from + 999);
-    if (e) throw new Error(`candles: ${e.message}`);
-    for (const c of data ?? []) {
-      candles.push({ time: c.date, open: +c.open, high: +c.high, low: +c.low, close: +c.close, volume: +c.volume });
-    }
-    if (!data || data.length < 1000) break;
-  }
-  const { data: eq } = await db
-    .from("earnings")
-    .select("period_end,revenue,net_profit,eps,eps_estimate,reported_at,reaction_1d,reaction_5d")
-    .eq("symbol", symbol)
-    .order("period_end", { ascending: true })
-    .limit(40);
+    if (error) throw new Error(`candles: ${error.message}`);
+    return data ?? [];
+  };
+  const pages = await Promise.all([page(0), page(1000), page(2000)]);
+  // ten years is about 2,500 sessions; carry on only if the third page came back full
+  for (let from = 3000; pages[pages.length - 1].length === 1000 && from < 8000; from += 1000) pages.push(await page(from));
+  return pages.flat().map((c) => ({ time: c.date, open: +c.open, high: +c.high, low: +c.low, close: +c.close, volume: +c.volume }));
+}
+
+const cachedCandles = unstable_cache((symbol: string) => loadCandles(adminDb(), symbol), ["candles-v1"], { tags: ["eod"], revalidate: 900 });
+export async function getCandles(symbol: string): Promise<Candle[]> {
+  await assertSignedIn();
+  return cachedCandles(symbol);
+}
+
+/** Everything on a stock page except the price history, which the chart fetches after first paint. */
+export async function loadStock(db: SupabaseClient, symbol: string): Promise<StockDetail | null> {
+  const { data: r, error } = await db.from("stock_latest").select("*").eq("symbol", symbol).eq("kind", "equity").maybeSingle();
+  if (error) throw new Error(`stock_latest: ${error.message}`);
+  if (!r) return null;
+  const [{ data: eq }, stock, sector, external, macro] = await Promise.all([
+    db
+      .from("earnings")
+      .select("period_end,revenue,net_profit,eps,eps_estimate,reported_at,reaction_1d,reaction_5d")
+      .eq("symbol", symbol)
+      .order("period_end", { ascending: true })
+      .limit(40),
+    getBacktests(db, "stock", symbol),
+    getBacktests(db, "sector", r.sector),
+    getExternal(db, symbol),
+    getSectorMacro(db, r.sector ?? null),
+  ]);
   const quarters = analyseQuarters(
     (eq ?? []).map((q) => ({
       periodEnd: q.period_end,
@@ -252,8 +298,13 @@ export async function getStockDetail(symbol: string): Promise<StockDetail | null
     })),
     n(r.fiscal_year_end_month),
   ).slice(-8);
-  const [stock, sector] = await Promise.all([getBacktests(db, "stock", symbol), getBacktests(db, "sector", r.sector)]);
-  return { row: mapRow(r), candles, quarters, today: todayIST(), backtests: { stock, sector }, external: await getExternal(db, symbol), macro: await getSectorMacro(db, r.sector ?? null) };
+  return { row: mapRow(r), quarters, today: todayIST(), backtests: { stock, sector }, external, macro };
+}
+
+const cachedStock = unstable_cache((symbol: string) => loadStock(adminDb(), symbol), ["stock-v1"], MARKET);
+export async function getStockDetail(symbol: string): Promise<StockDetail | null> {
+  await assertSignedIn();
+  return cachedStock(symbol);
 }
 
 /** Risks are shown only when they carry a source link and date; older rows stored plain strings. */
@@ -420,12 +471,20 @@ function mapEvent(e: any): MacroEvent {
   };
 }
 
-/** The latest regime read, the macro numbers with their 1- and 20-session changes, and the latest AI macro note. */
-export async function getMacro(): Promise<MacroView> {
-  const db = await userDb();
-  const [{ data: d }, { data: note }] = await Promise.all([
+/** The latest regime read, the macro numbers with their 1- and 20-session changes, and the latest AI macro note. One round of parallel queries. */
+export async function loadMacro(db: SupabaseClient): Promise<MacroView> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rowsOf = (data: any[] | null) => (data ?? []).map((r) => ({ date: r.date as string, close: Number(r.close) }));
+  const fromCandles = async (symbol: string) => rowsOf((await db.from("candles_daily").select("date,close").eq("symbol", symbol).order("date", { ascending: false }).limit(21)).data);
+  const fromSeries = async (id: string) => rowsOf((await db.from("macro_series").select("date,close").eq("series", id).order("date", { ascending: false }).limit(21)).data);
+  const [{ data: d }, { data: note }, { data: recentEvents }, nifty, vix, ...outside] = await Promise.all([
     db.from("macro_daily").select("*").order("date", { ascending: false }).limit(1).maybeSingle(),
     db.from("macro_notes").select("id,run_at,summary,flows,low_grade_sources").order("run_at", { ascending: false }).limit(1).maybeSingle(),
+    // the latest note's events are among the newest rows; fetched alongside rather than after the note
+    db.from("macro_events").select("*").order("id", { ascending: false }).limit(12),
+    fromCandles(INDEX_SYMBOLS[0]),
+    fromCandles(INDEX_SYMBOLS[1]),
+    ...MACRO_SERIES.map((x) => fromSeries(x.id)),
   ]);
   const point = (rows: { date: string; close: number }[]): MacroPoint | null => {
     if (!rows.length) return null;
@@ -433,12 +492,7 @@ export async function getMacro(): Promise<MacroView> {
     const ch = (k: number) => (rows[k] ? Math.round((last.close / rows[k].close - 1) * 10000) / 100 : null);
     return { value: last.close, date: last.date, chg1: ch(1), chg20: ch(20) };
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rowsOf = (data: any[] | null) => (data ?? []).map((r) => ({ date: r.date as string, close: Number(r.close) }));
-  const fromCandles = async (symbol: string) => rowsOf((await db.from("candles_daily").select("date,close").eq("symbol", symbol).order("date", { ascending: false }).limit(21)).data);
-  const fromSeries = async (id: string) => rowsOf((await db.from("macro_series").select("date,close").eq("series", id).order("date", { ascending: false }).limit(21)).data);
-  const [nifty, vix, ...outside] = await Promise.all([fromCandles(INDEX_SYMBOLS[0]), fromCandles(INDEX_SYMBOLS[1]), ...MACRO_SERIES.map((s) => fromSeries(s.id))]);
-  const events = note ? ((await db.from("macro_events").select("*").eq("note_id", note.id).order("id")).data ?? []).map(mapEvent) : [];
+  const events = note ? (recentEvents ?? []).filter((x) => x.note_id === note.id).sort((a, b) => a.id - b.id).map(mapEvent) : [];
   return {
     date: d?.date ?? null,
     regime: d?.regime ?? null,

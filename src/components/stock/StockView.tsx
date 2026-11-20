@@ -10,7 +10,7 @@ import { changePct, dayDiff, inr, pct, shortDate, toneOf } from "@/lib/format";
 import type { EntryPlan } from "@/lib/entry";
 import { fmtIST } from "@/lib/market";
 import type { Quarter, SignalStats, StockDetail, StockRow } from "@/lib/types";
-import { CandleChart } from "../charts/CandleChart";
+import { CandleChartLazy } from "../charts/CandleChartLazy";
 import { HitRateBars, QuarterBars, RadialGauge, RangeSlider } from "../charts/primitives";
 import { Odometer } from "../motion/Odometer";
 import { Rise, TypeIn } from "../motion/primitives";
@@ -249,16 +249,14 @@ function ReasonList({ title, items, start, empty = "Not computed yet." }: { titl
       <span className="label text-[10px] text-amber">{title}</span>
       <ol className="mt-1.5 flex flex-col">
         {items.map((r, i) => (
-          <motion.li
+          <li
             key={i}
-            className="flex gap-3 border-t border-line/70 py-2 text-[12.5px] leading-snug text-ink"
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: dur.sm, ease: ease.out, delay: seq.charts + (start + i) * 0.04 }}
+            className="slide-in flex gap-3 border-t border-line/70 py-2 text-[12.5px] leading-snug text-ink"
+            style={{ "--d": `${Math.round((seq.charts + (start + i) * 0.03) * 1000)}ms` } as React.CSSProperties}
           >
             <span className="num pt-px text-[10px] text-steel">{String(i + 1).padStart(2, "0")}</span>
             {r}
-          </motion.li>
+          </li>
         ))}
         {items.length === 0 && <li className="border-t border-line/70 py-2 text-[12.5px] text-steel">{empty}</li>}
       </ol>
@@ -350,14 +348,15 @@ function Controls({ row }: { row: StockRow }) {
 }
 
 export function StockView({ detail }: { detail: StockDetail }) {
-  const { row, candles, quarters, today, backtests } = detail;
+  const { row, quarters, today, backtests } = detail;
   const upcoming = row.nextResultDate != null && row.nextResultDate >= today;
   const daysToResult = upcoming ? dayDiff(today, row.nextResultDate!) : null;
   const q = useQuote(row.symbol);
   const price = q?.price ?? row.price;
   const prevClose = q?.prevClose ?? row.prevClose;
   const ch = price != null && prevClose ? changePct(price, prevClose) : null;
-  const ready = row.backfillStatus === "done" && candles.length > 30;
+  // indicators are only written once a stock has at least 30 sessions of history
+  const ready = row.backfillStatus === "done" && row.indDate != null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -446,7 +445,7 @@ export function StockView({ detail }: { detail: StockDetail }) {
           {/* ── Chart + scores ── */}
           <div className="grid grid-cols-12 gap-3">
             <Card index={1} className="col-span-12 h-[620px] xl:col-span-8" bodyClassName="p-0 h-full">
-              <CandleChart daily={candles} support={row.support} resistance={row.resistance} />
+              <CandleChartLazy symbol={row.symbol} support={row.support} resistance={row.resistance} />
             </Card>
 
             <div className="col-span-12 flex flex-col gap-3 xl:col-span-4">

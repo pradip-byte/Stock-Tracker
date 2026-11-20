@@ -1,9 +1,9 @@
 "use client";
 
 import clsx from "clsx";
-import { MotionConfig, motion } from "motion/react";
-import type { ReactNode } from "react";
-import { dur, ease, seq, stampSpring } from "./tokens";
+import { MotionConfig } from "motion/react";
+import type { CSSProperties, ReactNode } from "react";
+import { seq } from "./tokens";
 
 /** Respects prefers-reduced-motion for every Motion animation in the tree. */
 export function MotionRoot({ children }: { children: ReactNode }) {
@@ -11,8 +11,14 @@ export function MotionRoot({ children }: { children: ReactNode }) {
 }
 
 type Segment = { text: string; accent?: boolean };
+const ms = (seconds: number) => `${Math.round(seconds * 1000)}ms`;
+const delayVar = (seconds: number) => ({ "--d": ms(seconds) }) as CSSProperties;
 
-/** Kinetic headline: types in character by character. */
+/**
+ * Kinetic headline: types in character by character.
+ * A CSS animation, so the text appears from the first paint without waiting for
+ * JavaScript. The whole headline is in within about half a second however long it is.
+ */
 export function TypeIn({
   segments,
   className,
@@ -25,6 +31,7 @@ export function TypeIn({
   as?: "h1" | "h2" | "p";
 }) {
   const full = segments.map((s) => s.text).join("");
+  const step = Math.min(0.018, 0.42 / Math.max(1, full.replace(/ /g, "").length));
   let i = 0;
   return (
     <Tag className={className} aria-label={full}>
@@ -35,20 +42,11 @@ export function TypeIn({
               <span key={wi}>{word}</span>
             ) : (
               <span key={wi} className="inline-block whitespace-nowrap">
-                {word.split("").map((ch, ci) => {
-                  const n = i++;
-                  return (
-                    <motion.span
-                      key={ci}
-                      className="inline-block"
-                      initial={{ opacity: 0, y: "0.35em" }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: dur.sm, ease: ease.out, delay: delay + n * 0.018 }}
-                    >
-                      {ch}
-                    </motion.span>
-                  );
-                })}
+                {word.split("").map((ch, ci) => (
+                  <span key={ci} className="type-in" style={delayVar(delay + i++ * step)}>
+                    {ch}
+                  </span>
+                ))}
               </span>
             ),
           )}
@@ -58,32 +56,30 @@ export function TypeIn({
   );
 }
 
-/** Cards rise in with stagger. `index` sets the position in the sequence. */
+/**
+ * Cards rise in with stagger. `index` sets the position in the sequence.
+ * A CSS animation on the server-rendered element, so the card is visible from
+ * the first paint and does not wait for the page to hydrate.
+ */
 export function Rise({
   children,
   index = 0,
   className,
-  as = "div",
+  as: Tag = "div",
 }: {
   children: ReactNode;
   index?: number;
   className?: string;
   as?: "div" | "section" | "li";
 }) {
-  const Tag = motion[as];
   return (
-    <Tag
-      className={className}
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: dur.md, ease: ease.out, delay: seq.cards + index * seq.cardStagger }}
-    >
+    <Tag className={clsx("rise-in", className)} style={delayVar(seq.cards + Math.min(index, 12) * seq.cardStagger)}>
       {children}
     </Tag>
   );
 }
 
-/** Verdict badge stamps in: overshoot scale and a slight rotation. */
+/** Verdict badge stamps in: overshoot scale and a slight rotation. CSS, so the verdict is readable without waiting for JavaScript. */
 export function Stamp({
   children,
   delay = seq.charts,
@@ -94,13 +90,8 @@ export function Stamp({
   className?: string;
 }) {
   return (
-    <motion.div
-      className={clsx("inline-block origin-center", className)}
-      initial={{ opacity: 0, scale: 1.9, rotate: -9 }}
-      animate={{ opacity: 1, scale: 1, rotate: -2 }}
-      transition={{ ...stampSpring, delay, opacity: { duration: dur.xs, delay } }}
-    >
+    <div className={clsx("stamp-in", className)} style={delayVar(delay)}>
       {children}
-    </motion.div>
+    </div>
   );
 }

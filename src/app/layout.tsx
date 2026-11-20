@@ -4,7 +4,7 @@ import { MotionRoot } from "@/components/motion/primitives";
 import { QuotesProvider } from "@/components/shell/quotes";
 import { Disclaimer, TickerTape, TopBar } from "@/components/shell/Shell";
 import { getQuotes } from "@/lib/data";
-import { currentUser } from "@/lib/supabase/server";
+import { sessionEmail } from "@/lib/supabase/server";
 import "./globals.css";
 
 const barlow = Barlow_Condensed({
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const user = await currentUser();
+  const user = await sessionEmail();
   const quotes = user ? await getQuotes() : {};
   return (
     <html lang="en-IN" className={`${barlow.variable} ${geist.variable} ${jbmono.variable}`}>

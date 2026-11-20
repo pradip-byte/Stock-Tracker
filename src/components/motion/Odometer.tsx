@@ -7,14 +7,16 @@ import { dur, ease } from "./tokens";
 
 const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-function Digit({ d, delay, rollIn }: { d: number; delay: number; rollIn: boolean }) {
+function Digit({ d, delay }: { d: number; delay: number; rollIn?: boolean }) {
   return (
     <span aria-hidden className="relative inline-block">
       {/* in-flow ghost keeps width and baseline */}
       <span className="invisible">0</span>
       <motion.span
         className="absolute left-0 top-0 flex w-full flex-col items-center"
-        initial={rollIn ? { y: "0%" } : false}
+        // Always start on the real digit. Rolling up from zero on load meant the server-rendered
+        // page showed 0000.00 until JavaScript arrived, which is a wrong number on screen.
+        initial={false}
         animate={{ y: `${-d * 10}%` }}
         transition={{ duration: dur.lg, ease: ease.out, delay }}
       >

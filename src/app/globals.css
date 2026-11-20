@@ -208,10 +208,54 @@ body::before {
   animation-duration: 250ms;
 }
 
+/*
+ * Entrance motion that does not wait for JavaScript.
+ * These run from the first paint of the server-rendered HTML, so content is on
+ * screen within a few hundred milliseconds even before the page hydrates.
+ * Only transform and opacity are animated.
+ */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+.rise-in {
+  animation: rise-in var(--dur-md, 400ms) var(--ease-out) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes type-in {
+  from { opacity: 0; transform: translateY(0.35em); }
+  to { opacity: 1; transform: none; }
+}
+.type-in {
+  display: inline-block;
+  animation: type-in var(--dur-sm, 250ms) var(--ease-out) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes stamp-in {
+  0% { opacity: 0; transform: scale(1.9) rotate(-9deg); }
+  55% { opacity: 1; transform: scale(0.95) rotate(-2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-2deg); }
+}
+.stamp-in {
+  display: inline-block;
+  transform-origin: center;
+  animation: stamp-in 420ms var(--ease-out) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: none; }
+}
+.slide-in {
+  animation: slide-in var(--dur-sm, 250ms) var(--ease-out) both;
+  animation-delay: var(--d, 0ms);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
+    animation-delay: 0ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

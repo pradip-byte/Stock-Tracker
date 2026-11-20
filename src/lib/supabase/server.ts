@@ -1,5 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { probing } from "../perf";
 import { adminDb } from "./admin";
 
@@ -23,6 +23,22 @@ export async function userDb() {
 }
 
 export const allowedEmail = () => (process.env.ALLOWED_EMAIL ?? "").trim().toLowerCase();
+
+/**
+ * Email of the signed-in user as verified by the proxy for this request, or null.
+ * No network call: the proxy has already checked the session with Supabase and
+ * overwrites this header on every request, so the browser cannot supply it.
+ */
+export async function sessionEmail(): Promise<string | null> {
+  const email = (await headers()).get("x-st-user")?.toLowerCase() ?? null;
+  return email && allowedEmail() && email === allowedEmail() ? email : null;
+}
+
+/** Guard for cached page data, which is read with the service client: only for a verified session. */
+export async function assertSignedIn(): Promise<void> {
+  if (probing()) return;
+  if (!(await sessionEmail())) throw new Error("Not signed in");
+}
 
 /** Returns the signed-in user only if it is the single allowed account. */
 export async function currentUser() {

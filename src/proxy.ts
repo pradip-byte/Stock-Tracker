@@ -1,8 +1,16 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-/** Refreshes the Supabase session and keeps everything behind the single allowed account. */
+/** Header the proxy sets on the request once the session is verified. Anything the browser sends under this name is discarded. */
+const USER_HEADER = "x-st-user";
+
+/**
+ * Refreshes the Supabase session and keeps everything behind the single allowed account.
+ * The session is verified with Supabase once here; pages then read the verified email
+ * from a request header instead of asking Supabase a second time.
+ */
 export async function proxy(request: NextRequest) {
+  request.headers.delete(USER_HEADER);
   let response = NextResponse.next({ request });
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookies: {
@@ -25,7 +33,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
   if (ok && path === "/login") return NextResponse.redirect(new URL("/", request.url));
-  return response;
+  if (!ok) return response;
+  // forward the verified email, keeping any refreshed session cookies
+  request.headers.set(USER_HEADER, email!);
+  const verified = NextResponse.next({ request });
+  for (const c of response.cookies.getAll()) verified.cookies.set(c);
+  return verified;
 }
 
 export const config = {

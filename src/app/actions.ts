@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { addStock, refreshQuotes, runEod, type JobResult } from "@/lib/jobs/core";
 import { researchStock } from "@/lib/jobs/external";
@@ -30,6 +30,8 @@ export async function signOut() {
 export async function addStockAction(symbol: string) {
   await requireUser();
   const res = await addStock(symbol);
+  updateTag("eod");
+  updateTag("quotes");
   revalidatePath("/", "layout");
   return res;
 }
@@ -38,6 +40,8 @@ export async function removeStockAction(symbol: string): Promise<{ ok: boolean; 
   await requireUser();
   // candles, quotes, indicators and scores go with it (on delete cascade)
   const { error } = await adminDb().from("stocks").delete().eq("symbol", symbol).eq("kind", "equity");
+  updateTag("eod");
+  updateTag("quotes");
   revalidatePath("/", "layout");
   return error ? { ok: false, error: error.message } : { ok: true };
 }
@@ -45,6 +49,8 @@ export async function removeStockAction(symbol: string): Promise<{ ok: boolean; 
 export async function setWatchlistAction(symbol: string, value: boolean): Promise<{ ok: boolean }> {
   await requireUser();
   const { error } = await adminDb().from("stocks").update({ in_watchlist: value }).eq("symbol", symbol);
+  updateTag("eod");
+  updateTag("quotes");
   revalidatePath("/", "layout");
   return { ok: !error };
 }
@@ -52,6 +58,8 @@ export async function setWatchlistAction(symbol: string, value: boolean): Promis
 export async function runJobAction(job: "quotes" | "eod"): Promise<JobResult> {
   await requireUser();
   const res = job === "quotes" ? await refreshQuotes({ force: true }) : await runEod({ force: true, budgetMs: 40000 });
+  updateTag("eod");
+  updateTag("quotes");
   revalidatePath("/", "layout");
   return res;
 }
@@ -60,6 +68,8 @@ export async function runJobAction(job: "quotes" | "eod"): Promise<JobResult> {
 export async function refreshExternalAction(symbol: string): Promise<{ ok: boolean; error?: string; score?: number; costUsd?: number }> {
   await requireUser();
   const res = await researchStock(symbol, "manual");
+  updateTag("eod");
+  updateTag("quotes");
   revalidatePath("/", "layout");
   return res;
 }

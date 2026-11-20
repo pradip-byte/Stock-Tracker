@@ -161,7 +161,6 @@ export type AiRun = {
 
 export type StockDetail = {
   row: StockRow;
-  candles: Candle[];
   quarters: Quarter[];
   today: string;
   /** Backtests for this stock and, as a fallback for thin samples, its sector. */

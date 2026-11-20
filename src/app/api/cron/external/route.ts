@@ -1,3 +1,4 @@
+import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { cronAuthorised } from "@/lib/cron-auth";
 import { runExternalWeekly } from "@/lib/jobs/external";
@@ -11,6 +12,8 @@ async function handle(request: Request) {
   if (!cronAuthorised(request)) return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   // stop starting new calls after 150 seconds so the last one can finish inside the limit
   const result = await runExternalWeekly({ budgetMs: 150000 });
+  // cached page data is refreshed on the next visit
+  revalidateTag("eod", "max");
   return NextResponse.json(result, { status: result.status === "error" ? 500 : 200 });
 }
 
