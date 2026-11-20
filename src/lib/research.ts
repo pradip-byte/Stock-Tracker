@@ -317,6 +317,7 @@ export function runResearch(stocks: StockData[], nifty: Candle[], opts: Research
         favourable: snap.sig_trend,
         freshBreakout: heldBreakout(c, series.volRatio, i, 3),
         recentBreakout: heldBreakout(c, series.volRatio, i, 10),
+        breakdown: snap.sig_breakdown,
         target: frame.target,
         stop: frame.stop,
       });

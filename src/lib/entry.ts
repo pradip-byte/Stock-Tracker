@@ -6,9 +6,10 @@
  *  Extended, don't chase   more than 3 ATR above the 20 DMA, or RSI above 75
  *  Good entry              uptrend, reward-to-risk of 2 or more, and either within
  *                          1 ATR of a rising 20 DMA or a volume breakout in the last 3 sessions
- *  Wait for pullback       short-term verdict is Favourable but price is more than 2 ATR
- *                          above the 20 DMA; a limit price and stop are suggested
- *  No setup                everything else
+ *  Wait for pullback       short-term verdict is Favourable and price is stretched above the
+ *                          20 DMA: more than 2 ATR above it, or more than 1 ATR above it in
+ *                          an uptrend. A limit price and stop are suggested
+ *  No setup                everything else, with the reason in one short line
  *
  * Checked in that order. This describes price position only. It is not advice.
  */
@@ -32,6 +33,8 @@ export type EntryInput = {
   freshBreakout: number | null;
   /** Level of a volume breakout in the last 10 sessions that the close still holds above. */
   recentBreakout: number | null;
+  /** Breakdown warning is active. Only used to explain a "No setup". */
+  breakdown?: boolean;
   /** Target and stop of the standard trade frame (nearest resistance, support less half an ATR). */
   target: number;
   stop: number;
@@ -66,7 +69,7 @@ export function entryPlan(v: EntryInput): EntryPlan {
     note,
   });
   const dist = sma20 != null && atr ? (close - sma20) / atr : null;
-  if (sma20 == null || !atr || dist == null) return now("No setup", "Not enough history for the 20 DMA and ATR.");
+  if (sma20 == null || !atr || dist == null) return now("No setup", "not enough history for the 20 DMA and ATR");
 
   // a limit to wait for: the breakout level if there was a recent one above the 20 DMA, otherwise the 20 DMA
   const limit = v.recentBreakout != null && v.recentBreakout > sma20 && v.recentBreakout < close ? v.recentBreakout : sma20;
@@ -95,15 +98,25 @@ export function entryPlan(v: EntryInput): EntryPlan {
     );
   }
 
-  if (v.favourable && dist > 2) {
+  // Favourable and stretched: beyond 2 ATR always, beyond 1 ATR when the trend is up
+  if (v.favourable && (dist > 2 || (v.uptrend && dist > 1))) {
     return waitPlan("Wait for pullback", `Price is ${dist.toFixed(1)} ATR above the 20 DMA. A limit at ${limitIs} gives a better reward-to-risk.`);
   }
 
-  const why = !v.uptrend
-    ? "Not in an uptrend (price above the 50 DMA above the 200 DMA)."
-    : nowRR == null || nowRR < 2
-      ? `Reward-to-risk is ${nowRR == null ? "not defined" : `${nowRR.toFixed(1)}x`}, below 2.`
-      : "Price is neither near a rising 20 DMA nor on a fresh breakout.";
+  // one short reason, most decisive first
+  const why = v.breakdown
+    ? "breakdown active"
+    : !v.uptrend
+      ? "not in an uptrend"
+      : dist > 1
+        ? `${dist.toFixed(1)} ATR above the 20 DMA and the short-term verdict is not Favourable`
+        : nowRR == null
+          ? "reward-to-risk not defined: price is outside its stop and target"
+          : nowRR < 2
+            ? `reward-to-risk ${nowRR.toFixed(1)}x, below 2`
+            : dist < -1
+              ? `${Math.abs(dist).toFixed(1)} ATR below the 20 DMA`
+              : "20 DMA is not rising and there is no fresh breakout";
   return now("No setup", why);
 }
 

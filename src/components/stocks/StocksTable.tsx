@@ -72,7 +72,11 @@ function Row({ r, today, paper }: { r: StockRow; today: string; paper?: PaperByS
         {r.entry ? (
           <EntryTag
             rating={r.entry.rating}
-            title={`${r.entry.note} Entry ${r.entry.entryKind === "limit" ? "limit " : ""}${inr(r.entry.entry)}, stop ${inr(r.entry.stop)}, target ${inr(r.entry.target)}${r.entry.rewardRisk != null ? `, reward-to-risk ${r.entry.rewardRisk.toFixed(1)}x` : ""}.`}
+            title={
+              r.entry.rating === "No setup"
+                ? `No setup: ${r.entry.note}`
+                : `${r.entry.note} Entry ${r.entry.entryKind === "limit" ? "limit " : ""}${inr(r.entry.entry)}, stop ${inr(r.entry.stop)}, target ${inr(r.entry.target)}${r.entry.rewardRisk != null ? `, reward-to-risk ${r.entry.rewardRisk.toFixed(1)}x` : ""}.`
+            }
           />
         ) : (
           <span className="num text-steel">—</span>

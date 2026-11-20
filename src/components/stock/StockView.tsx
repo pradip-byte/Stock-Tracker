@@ -40,7 +40,10 @@ function EntryBlock({ plan }: { plan: EntryPlan }) {
           </span>
         )}
       </div>
-      <p className="text-[12.5px] leading-snug text-ink">{plan.note}</p>
+      <p className="text-[12.5px] leading-snug text-ink">
+        {plan.rating === "No setup" ? <span className="text-steel">Why: </span> : null}
+        {plan.note}
+      </p>
       <div className="grid grid-cols-4 gap-3 border-t border-line pt-2.5">
         {cell(plan.entryKind === "limit" ? "Limit entry" : "Entry", inr(plan.entry), true)}
         {cell("Stop", inr(plan.stop))}
@@ -48,8 +51,9 @@ function EntryBlock({ plan }: { plan: EntryPlan }) {
         {cell("Reward:risk", plan.rewardRisk != null ? `${plan.rewardRisk.toFixed(1)}x` : "—")}
       </div>
       <p className="text-[11px] leading-snug text-steel">
-        Tested on 2017 to 2026: buying a Good entry at the next open did no better than a random day. Waiting for a pullback limit beat buying
-        at once by roughly 0.7% over the next week, and the limit filled about 40% of the time. Learning only, not advice.
+        Tested on 2017 to 2026: buying a Good entry at the next open did no better than a random day. A pullback limit beat buying at once by
+        roughly 0.4% over the next week and filled about half the time; over 20 sessions that advantage did not hold in the later years.
+        Learning only, not advice.
       </p>
     </div>
   );

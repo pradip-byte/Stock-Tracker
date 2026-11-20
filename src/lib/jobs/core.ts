@@ -188,6 +188,7 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     favourable: v.shortVerdict === "Favourable",
     freshBreakout: heldBreakout(candles, series.volRatio, n - 1, 3),
     recentBreakout: heldBreakout(candles, series.volRatio, n - 1, 10),
+    breakdown: last.sig_breakdown,
     target: t.target,
     stop: t.stop,
   });
