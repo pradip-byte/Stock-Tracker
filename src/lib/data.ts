@@ -2,7 +2,7 @@
 import { analyseQuarters } from "./events";
 import { MACRO_SERIES, type MacroEvent, type MacroPoint, type MacroView, type SectorMacroItem } from "./macro";
 import { todayIST } from "./market";
-import { breakdown, entryLabel, limitStats, mapTrade, niftyPnl, pnlAt, summarise, type LimitStats, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
+import { breakdown, entryLabel, externalBand, limitStats, mapTrade, niftyPnl, pnlAt, summarise, type LimitStats, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
 import { userDb } from "./supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -350,6 +350,7 @@ export type Scoreboard = {
   bySignal: PaperStats[];
   byEntry: PaperStats[];
   byRegime: PaperStats[];
+  byExternal: PaperStats[];
   recent: MarkedTrade[];
   pending: number;
   limits: LimitStats;
@@ -391,6 +392,7 @@ export async function getScoreboards(): Promise<{ boards: Scoreboard[]; quotesAt
       bySignal: breakdown(marked, (t) => t.context.signal ?? "No signal"),
       byEntry: breakdown(marked, entryLabel),
       byRegime: breakdown(marked, regimeOf),
+      byExternal: breakdown(marked, externalBand),
       recent: marked.slice(0, 40),
       pending: mine.filter((t) => t.status === "pending").length,
       limits: limitStats(mine),

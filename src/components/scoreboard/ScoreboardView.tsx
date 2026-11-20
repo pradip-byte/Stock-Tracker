@@ -165,6 +165,13 @@ function Board({ b, index }: { b: Scoreboard; index: number }) {
           <Card index={index + 2} className="col-span-12 xl:col-span-6" title="By market regime at entry" bodyClassName="p-0">
             <StatsTable rows={b.byRegime} />
           </Card>
+          <Card index={index + 3} className="col-span-12 xl:col-span-6" title="By external score at entry" bodyClassName="p-0">
+            <StatsTable rows={b.byExternal} />
+            <p className="px-3.5 py-2.5 text-[11px] leading-snug text-steel">
+              The external score is the AI news read (news tone, guidance, sector outlook). If trades entered with a high score do no better
+              than those with a low score or no read, the read is not adding anything.
+            </p>
+          </Card>
           <Card index={index + 3} className="col-span-12" title="Latest trades" bodyClassName="p-0">
             <Trades rows={b.recent} />
           </Card>

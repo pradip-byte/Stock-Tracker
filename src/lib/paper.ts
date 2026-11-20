@@ -89,6 +89,12 @@ export function limitStats(trades: PaperTrade[]): LimitStats {
   return { placed: limits.length, filled, expired, waiting, fillRate: filled + expired ? Math.round((filled / (filled + expired)) * 1000) / 10 : null };
 }
 
+/** External (AI news read) score at entry, in the bands the scoreboard compares. */
+export const externalBand = (t: PaperTrade) => {
+  const x = t.context.external;
+  return x == null ? "No read" : x < 45 ? "External below 45" : x <= 60 ? "External 45 to 60" : "External above 60";
+};
+
 /** Label used in the entry-rating breakdown: limit orders are kept apart from trades bought at the open. */
 export const entryLabel = (t: PaperTrade) => `${t.context.entryRating ?? "Unknown"}${t.variant === "limit" ? ", limit order" : ""}`;
 
