@@ -8,7 +8,7 @@
 
 export type PaperBook = "mine" | "shadow";
 export type PaperHorizon = "ST" | "LT";
-export type PaperStatus = "pending" | "open" | "closing" | "closed" | "cancelled";
+export type PaperStatus = "pending" | "open" | "closing" | "closed" | "cancelled" | "expired";
 
 export type PaperContext = {
   shortVerdict?: string | null;
@@ -35,7 +35,11 @@ export type PaperTrade = {
   status: PaperStatus;
   amount: number;
   requestedAt: string;
-  fillRule: "quote" | "open";
+  fillRule: "quote" | "open" | "limit";
+  /** "limit" is a shadow order resting at a suggested pullback price. */
+  variant: "market" | "limit";
+  limitPrice: number | null;
+  limitSessions: number | null;
   entryAt: string | null;
   entryPrice: number | null;
   qty: number | null;
@@ -73,6 +77,20 @@ export function niftyPnl(t: { amount: number; niftyEntry: number | null; costPct
 }
 
 export const MIN_TRADES_TO_JUDGE = 30;
+
+/** How often resting limit orders were reached. Orders still waiting are not in the rate. */
+export type LimitStats = { placed: number; filled: number; expired: number; waiting: number; fillRate: number | null };
+
+export function limitStats(trades: PaperTrade[]): LimitStats {
+  const limits = trades.filter((t) => t.variant === "limit" && t.status !== "cancelled");
+  const filled = limits.filter((t) => t.entryPrice != null).length;
+  const expired = limits.filter((t) => t.status === "expired").length;
+  const waiting = limits.filter((t) => t.status === "pending").length;
+  return { placed: limits.length, filled, expired, waiting, fillRate: filled + expired ? Math.round((filled / (filled + expired)) * 1000) / 10 : null };
+}
+
+/** Label used in the entry-rating breakdown: limit orders are kept apart from trades bought at the open. */
+export const entryLabel = (t: PaperTrade) => `${t.context.entryRating ?? "Unknown"}${t.variant === "limit" ? ", limit order" : ""}`;
 
 export type PaperStats = {
   label: string;
@@ -149,6 +167,9 @@ export function mapTrade(r: any): PaperTrade {
     amount: Number(r.amount),
     requestedAt: r.requested_at,
     fillRule: r.fill_rule,
+    variant: r.variant ?? "market",
+    limitPrice: n(r.limit_price),
+    limitSessions: n(r.limit_sessions),
     entryAt: r.entry_at,
     entryPrice: n(r.entry_price),
     qty: n(r.qty),

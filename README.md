@@ -133,12 +133,16 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
     long-term trade stays open until you close it; it is flagged when the long-term verdict turns Avoid.
   - *Costs:* `TRADE_COST_PCT` (default 0.25% round trip), half on entry and half on exit.
   - *Shadow portfolio:* after each end-of-day run, a notional trade (`SHADOW_TRADE_INR`, default 100000) is
-    opened for every stock that newly became short-term Favourable with a Good entry, and for every stock
-    that newly became long-term Favourable. It fills at the next open. Shadow long-term trades close when
-    the long-term verdict turns Avoid.
+    opened for every stock that newly became short-term Favourable, whatever its entry rating (the rating is
+    stored with the trade), and for every stock that newly became long-term Favourable. These fill at the
+    next open. A stock rated Wait for pullback also gets a second shadow trade: a limit order at the suggested
+    price, valid for 5 sessions. It fills at the limit, or at the open if the day opens below it, and is
+    marked expired if the price never gets there. Shadow long-term trades close when the long-term verdict
+    turns Avoid.
   - *Scoreboard* (`/scoreboard`): my trades and the shadow portfolio separately, with win rate, average win
     and loss, expectancy, total return and the same money in Nifty 50 over the same dates, broken down by
-    horizon, signal, entry rating and market regime. Fewer than 30 closed trades shows "too few trades to
+    horizon, signal, entry rating (limit orders listed apart) and market regime. The shadow section also shows
+    how many pullback limits were placed, filled and expired, and the fill rate. Fewer than 30 closed trades shows "too few trades to
     judge".
 - **Macro view** (`src/lib/macro.ts`, `src/lib/jobs/macro.ts`).
   - *Daily numbers*, stored with history: Nifty 50 and India VIX (already tracked), plus Brent crude, USD/INR,

@@ -2,7 +2,7 @@
 import { analyseQuarters } from "./events";
 import { MACRO_SERIES, type MacroEvent, type MacroPoint, type MacroView, type SectorMacroItem } from "./macro";
 import { todayIST } from "./market";
-import { breakdown, mapTrade, niftyPnl, pnlAt, summarise, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
+import { breakdown, entryLabel, limitStats, mapTrade, niftyPnl, pnlAt, summarise, type LimitStats, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
 import { userDb } from "./supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -352,6 +352,7 @@ export type Scoreboard = {
   byRegime: PaperStats[];
   recent: MarkedTrade[];
   pending: number;
+  limits: LimitStats;
 };
 
 /** Every filled paper trade marked to the latest stored quote, summarised for one book. */
@@ -388,10 +389,11 @@ export async function getScoreboards(): Promise<{ boards: Scoreboard[]; quotesAt
       overall: summarise("All trades", marked),
       byHorizon: breakdown(marked, (t) => (t.horizon === "ST" ? "Short term" : "Long term")),
       bySignal: breakdown(marked, (t) => t.context.signal ?? "No signal"),
-      byEntry: breakdown(marked, (t) => t.context.entryRating ?? "Unknown"),
+      byEntry: breakdown(marked, entryLabel),
       byRegime: breakdown(marked, regimeOf),
       recent: marked.slice(0, 40),
       pending: mine.filter((t) => t.status === "pending").length,
+      limits: limitStats(mine),
     };
   });
   return { boards, quotesAt };

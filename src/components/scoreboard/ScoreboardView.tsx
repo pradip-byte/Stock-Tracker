@@ -98,7 +98,7 @@ function Board({ b, index }: { b: Scoreboard; index: number }) {
   const blurb =
     b.book === "mine"
       ? "Trades you opened from the stocks list."
-      : "Opened automatically, in equal notional size, for every new short-term Favourable with a Good entry and every new long-term Favourable. It measures the system without your selection.";
+      : "Opened automatically, in equal notional size, for every new short-term Favourable (whatever its entry rating, which is recorded) and every new long-term Favourable. A Wait-for-pullback stock also gets a second trade as a limit order at the suggested price, valid for 5 sessions. It measures the system without your selection.";
   return (
     <section className="flex flex-col gap-3">
       <Card index={index} title={title} right={<span className="num text-[10px] uppercase tracking-wider text-steel">{b.pending} waiting to fill</span>}>
@@ -134,6 +134,15 @@ function Board({ b, index }: { b: Scoreboard; index: number }) {
                 <span className="num text-[10px] text-steel">{o.niftyPnl == null ? "no index price at entry" : `${rupees(o.niftyPnl)}, same dates and cost`}</span>
               </Stat>
             </div>
+            {b.limits.placed > 0 && (
+              <p className="num mt-4 border-t border-line pt-3 text-[11px] leading-relaxed text-steel">
+                Pullback limit orders: <span className="text-ink">{b.limits.placed}</span> placed, <span className="text-ink">{b.limits.filled}</span> filled,{" "}
+                <span className="text-ink">{b.limits.expired}</span> expired unfilled, {b.limits.waiting} still waiting. Fill rate{" "}
+                <span className="text-ink">{b.limits.fillRate == null ? "not known yet" : `${b.limits.fillRate.toFixed(0)}%`}</span>
+                {b.limits.filled + b.limits.expired > 0 && b.limits.filled + b.limits.expired < 30 ? " (too few to judge)" : ""}. An unfilled limit is a trade
+                that never happened, so compare its return with the fill rate in mind.
+              </p>
+            )}
             {!o.enough && (
               <p className="num mt-4 border-t border-line pt-3 text-[11px] uppercase tracking-wider text-amber">
                 Too few trades to judge: {o.closed} closed, at least {MIN_TRADES_TO_JUDGE} needed before these numbers mean anything.

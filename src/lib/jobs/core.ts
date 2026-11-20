@@ -464,7 +464,7 @@ export async function runEod(opts: { force?: boolean; budgetMs?: number } = {}):
           await runMacroDaily();
           const paper = await processPaper("eod", db);
           const shadow = await openShadowTrades(db);
-          await db.from("job_runs").insert({ job: "paper", status: "ok", finished_at: new Date().toISOString(), ok_count: paper.filled + paper.closed + shadow.st.length + shadow.lt.length, fail_count: 0, detail: { ...paper, shadowST: shadow.st, shadowLT: shadow.lt } });
+          await db.from("job_runs").insert({ job: "paper", status: "ok", finished_at: new Date().toISOString(), ok_count: paper.filled + paper.closed + shadow.st.length + shadow.lt.length + shadow.limits.length, fail_count: 0, detail: { ...paper, shadowST: shadow.st, shadowLimits: shadow.limits, shadowLT: shadow.lt } });
         } catch (e) {
           await db.from("job_runs").insert({ job: "paper", status: "error", finished_at: new Date().toISOString(), error: msg(e) });
         }

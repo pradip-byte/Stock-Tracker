@@ -17,8 +17,12 @@
  * Avoid; shadow ones are closed at the next open when that happens.
  *
  * Shadow book: at the end of each day, a notional equal-size trade is opened for
- * every stock that NEWLY became short-term Favourable with a Good entry, and for
- * every stock that newly became long-term Favourable. It fills at the next open.
+ * every stock that NEWLY became short-term Favourable, whatever its entry rating
+ * (the rating is stored, so the scoreboard can compare them), and for every stock
+ * that newly became long-term Favourable. These fill at the next open.
+ * A stock rated "Wait for pullback" also gets a second shadow trade: a limit order
+ * resting at the suggested price for 5 sessions. It fills at the limit, or at the
+ * open if the day opens below it, and expires unfilled otherwise.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isMarketOpen, istParts, todayIST } from "../market";
@@ -27,6 +31,7 @@ import { tradeCostPct } from "../settings";
 import { adminDb } from "../supabase/admin";
 
 export const ST_MAX_SESSIONS = 20;
+export const LIMIT_SESSIONS = 5;
 const NIFTY = "NIFTY50";
 
 /** Notional size of each shadow trade, in rupees. */
@@ -82,7 +87,9 @@ export async function requestTrade(
   symbol: string,
   amount: number,
   db: SupabaseClient = adminDb(),
+  opts: { limit?: boolean } = {},
 ): Promise<{ ok: boolean; error?: string; id?: number }> {
+  const variant = opts.limit ? "limit" : "market";
   if (!Number.isFinite(amount) || amount < 100 || amount > 1e9) return { ok: false, error: "Enter an amount of at least ₹100." };
   const { data: row } = await db.from("stock_latest").select(ROW_COLS).eq("symbol", symbol).eq("kind", "equity").maybeSingle();
   if (!row) return { ok: false, error: `${symbol} is not tracked.` };
@@ -92,6 +99,7 @@ export async function requestTrade(
     .eq("book", book)
     .eq("horizon", horizon)
     .eq("symbol", symbol)
+    .eq("variant", variant)
     .in("status", ["pending", "open", "closing"])
     .limit(1);
   if (active?.length) return { ok: false, error: "There is already an open paper trade for this stock in this column." };
@@ -99,9 +107,11 @@ export async function requestTrade(
   // short-term trades carry the target and stop of an entry made now; they are re-based at the fill if the price has moved past them
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const r = row as any;
-  const entryNow = r.entry?.entryKind === "now";
-  const target = horizon === "ST" ? Number(entryNow ? r.entry.target : r.target) || null : null;
-  const stop = horizon === "ST" ? Number(entryNow ? r.entry.stop : r.stop) || null : null;
+  // a limit order carries the limit plan's own levels; a trade bought now carries the levels of an entry made now
+  const usePlan = opts.limit ? r.entry?.entryKind === "limit" : r.entry?.entryKind === "now";
+  if (opts.limit && !usePlan) return { ok: false, error: "This stock has no suggested limit price." };
+  const target = horizon === "ST" ? Number(usePlan ? r.entry.target : r.target) || null : null;
+  const stop = horizon === "ST" ? Number(usePlan ? r.entry.stop : r.stop) || null : null;
   const { data, error } = await db
     .from("paper_trades")
     .insert({
@@ -110,7 +120,10 @@ export async function requestTrade(
       symbol,
       amount: Math.round(amount * 100) / 100,
       // a shadow trade is decided on the day's close, so it always takes the next open
-      fill_rule: book === "mine" && isMarketOpen() ? "quote" : "open",
+      fill_rule: opts.limit ? "limit" : book === "mine" && isMarketOpen() ? "quote" : "open",
+      variant,
+      limit_price: opts.limit ? Number(r.entry.entry) : null,
+      limit_sessions: opts.limit ? LIMIT_SESSIONS : null,
       target,
       stop,
       max_sessions: horizon === "ST" ? ST_MAX_SESSIONS : null,
@@ -139,7 +152,7 @@ export async function requestClose(id: number, reason = "manual", db: SupabaseCl
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
-type Counts = { filled: number; closed: number; flagged: number; opened: number };
+type Counts = { filled: number; closed: number; flagged: number; opened: number; expired: number };
 
 function closePatch(t: PaperTrade, price: number, at: string, reason: string, nifty: number | null) {
   const p = pnlAt({ amount: t.amount, qty: t.qty!, entryPrice: t.entryPrice!, costPct: t.costPct }, price);
@@ -154,7 +167,7 @@ const closeTime = (date: string) => new Date(`${date}T10:00:00Z`).toISOString();
  * refresh; "eod" also walks completed daily bars for target, stop and time exits.
  */
 export async function processPaper(mode: "quotes" | "eod", db: SupabaseClient = adminDb()): Promise<Counts> {
-  const counts: Counts = { filled: 0, closed: 0, flagged: 0, opened: 0 };
+  const counts: Counts = { filled: 0, closed: 0, flagged: 0, opened: 0, expired: 0 };
   const { data } = await db.from("paper_trades").select("*").in("status", ["pending", "open", "closing"]).limit(5000);
   const trades = (data ?? []).map(mapTrade);
   if (!trades.length) return counts;
@@ -165,7 +178,39 @@ export async function processPaper(mode: "quotes" | "eod", db: SupabaseClient = 
   for (const t of trades) {
     const q = quotes.get(t.symbol);
     try {
-      // 1. fills
+      // 1a. a resting limit order: reached when the price trades at or below it
+      if (t.status === "pending" && t.variant === "limit" && t.limitPrice != null) {
+        const limit = t.limitPrice;
+        const fill = async (price: number, at: string, niftyPrice: number | null) => {
+          let { target, stop } = t;
+          if (target == null || stop == null || stop >= price || target <= price) {
+            target = Math.round(price * 1.06 * 100) / 100;
+            stop = Math.round(price * 0.97 * 100) / 100;
+          }
+          await db.from("paper_trades").update({ status: "open", entry_at: at, entry_price: price, qty: t.amount / price, nifty_entry: niftyPrice, target, stop }).eq("id", t.id).eq("status", "pending");
+          counts.filled++;
+        };
+        if (after(q, t.requestedAt) && q!.price <= limit) {
+          // the order was resting before this session, so a day that opened below it fills at the open
+          await fill(q!.open != null && q!.open <= limit ? q!.open : limit, q!.time!, nifty?.price ?? null);
+          continue;
+        }
+        if (mode === "eod") {
+          const reqDate = istParts(new Date(t.requestedAt)).date;
+          const { data: bars } = await db.from("candles_daily").select("date,open,low").eq("symbol", t.symbol).gt("date", reqDate).order("date").limit(t.limitSessions ?? LIMIT_SESSIONS);
+          const hit = (bars ?? []).find((b) => Number(b.low) <= limit);
+          if (hit) {
+            const { data: nb } = await db.from("candles_daily").select("close").eq("symbol", NIFTY).eq("date", hit.date).maybeSingle();
+            await fill(Math.min(Number(hit.open), limit), new Date(`${hit.date}T03:45:00Z`).toISOString(), nb ? Number(nb.close) : null);
+          } else if ((bars ?? []).length >= (t.limitSessions ?? LIMIT_SESSIONS)) {
+            await db.from("paper_trades").update({ status: "expired", exit_reason: `limit not reached in ${t.limitSessions ?? LIMIT_SESSIONS} sessions` }).eq("id", t.id).eq("status", "pending");
+            counts.expired++;
+          }
+        }
+        continue;
+      }
+
+      // 1b. fills at the next quote or open
       if (t.status === "pending") {
         if (!after(q, t.requestedAt)) continue;
         const price = t.fillRule === "open" ? (q!.open ?? q!.price) : q!.price;
@@ -276,7 +321,7 @@ export async function processPaper(mode: "quotes" | "eod", db: SupabaseClient = 
  * the previous session's. A previous score from before the entry rating existed
  * is ignored, so the first run does not open a trade for everything at once.
  */
-export async function openShadowTrades(db: SupabaseClient = adminDb(), opts: { dryRun?: boolean } = {}): Promise<{ st: string[]; lt: string[] }> {
+export async function openShadowTrades(db: SupabaseClient = adminDb(), opts: { dryRun?: boolean } = {}): Promise<{ st: string[]; lt: string[]; limits: string[] }> {
   const since = new Date(Date.now() - 12 * 86400000).toISOString().slice(0, 10);
   const scores: { symbol: string; date: string; short_verdict: string | null; long_verdict: string | null; entry: { rating?: string } | null }[] = [];
   for (let from = 0; from < 20000; from += 1000) {
@@ -297,26 +342,32 @@ export async function openShadowTrades(db: SupabaseClient = adminDb(), opts: { d
     bySymbol.get(s.symbol)!.push(s);
   }
   const latest = scores.reduce((m, s) => (s.date > m ? s.date : m), "");
-  const { data: act } = await db.from("paper_trades").select("symbol,horizon").eq("book", "shadow").in("status", ["pending", "open", "closing"]).limit(5000);
-  const active = new Set((act ?? []).map((a) => `${a.symbol}|${a.horizon}`));
+  const { data: act } = await db.from("paper_trades").select("symbol,horizon,variant").eq("book", "shadow").in("status", ["pending", "open", "closing"]).limit(5000);
+  const active = new Set((act ?? []).map((a) => `${a.symbol}|${a.horizon}${a.variant === "limit" ? "|limit" : ""}`));
   const { data: eq } = await db.from("stocks").select("symbol").eq("kind", "equity");
   const equities = new Set((eq ?? []).map((e) => e.symbol as string));
 
   const st: string[] = [];
   const lt: string[] = [];
-  const stOk = (s: (typeof scores)[number]) => s.short_verdict === "Favourable" && s.entry?.rating === "Good entry";
+  const limits: string[] = [];
+  const stOk = (s: (typeof scores)[number]) => s.short_verdict === "Favourable";
   for (const [symbol, list] of bySymbol) {
     const [now, prev] = list;
     if (!equities.has(symbol) || !now || !prev || now.date !== latest || latest !== todayOrLastSession(latest)) continue;
     if (!now.entry || !prev.entry) continue; // scored before the entry rating existed
-    if (stOk(now) && !stOk(prev) && !active.has(`${symbol}|ST`)) st.push(symbol);
+    if (stOk(now) && !stOk(prev)) {
+      if (!active.has(`${symbol}|ST`)) st.push(symbol);
+      // a pullback stock also gets a resting limit order at the suggested price
+      if (now.entry.rating === "Wait for pullback" && !active.has(`${symbol}|ST|limit`)) limits.push(symbol);
+    }
     if (now.long_verdict === "Favourable" && prev.long_verdict !== "Favourable" && !active.has(`${symbol}|LT`)) lt.push(symbol);
   }
   if (!opts.dryRun) {
     for (const s of st) await requestTrade("shadow", "ST", s, shadowAmount(), db);
+    for (const s of limits) await requestTrade("shadow", "ST", s, shadowAmount(), db, { limit: true });
     for (const s of lt) await requestTrade("shadow", "LT", s, shadowAmount(), db);
   }
-  return { st, lt };
+  return { st, lt, limits };
 }
 
 /** Shadow trades are only opened from scores no older than four days, so a long outage cannot open stale ones. */

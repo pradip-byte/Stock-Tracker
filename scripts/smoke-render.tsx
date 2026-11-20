@@ -11,7 +11,7 @@ import { MacroItems } from "../src/components/stock/MacroItems";
 import { EntryTag } from "../src/components/ui/core";
 import type { Scoreboard } from "../src/lib/data";
 import { regimeOf, type MacroEvent, type MacroView } from "../src/lib/macro";
-import { breakdown, summarise, type MarkedTrade, type PaperTrade } from "../src/lib/paper";
+import { breakdown, entryLabel, limitStats, summarise, type MarkedTrade, type PaperTrade } from "../src/lib/paper";
 
 const event: MacroEvent = {
   id: 1,
@@ -45,7 +45,7 @@ const macro: MacroView = {
 };
 
 const trade = (id: number, over: Partial<PaperTrade>): PaperTrade => ({
-  id, book: "mine", horizon: "ST", symbol: "INFY", status: "closed", amount: 25000, requestedAt: "2026-11-20T06:00:00Z", fillRule: "quote",
+  id, book: "mine", horizon: "ST", symbol: "INFY", status: "closed", amount: 25000, requestedAt: "2026-11-20T06:00:00Z", fillRule: "quote", variant: "market", limitPrice: null, limitSessions: null,
   entryAt: "2026-11-20T06:19:00Z", entryPrice: 1111.5, qty: 22.49, niftyEntry: 25563, target: 1178, stop: 1078, maxSessions: 20, closeRequestedAt: null,
   exitAt: null, exitPrice: null, exitReason: null, niftyExit: null, costPct: 0.25, pnlInr: null, pnlPct: null, flag: null,
   context: { signal: "Trend", entryRating: "Good entry", marketUp: true }, ...over,
@@ -53,6 +53,7 @@ const trade = (id: number, over: Partial<PaperTrade>): PaperTrade => ({
 const marked: MarkedTrade[] = [
   { trade: trade(1, { exitPrice: 1178, exitReason: "target", exitAt: "2026-11-25T10:00:00Z" }), pnlInr: 1430, pnlPct: 5.72, niftyInr: 210, closed: true },
   { trade: trade(2, { symbol: "TCS", exitPrice: 2330, exitReason: "stop" }), pnlInr: -820, pnlPct: -3.28, niftyInr: -40, closed: true },
+  { trade: trade(4, { symbol: "EXIDEIND", variant: "limit", fillRule: "limit", limitPrice: 360.8, limitSessions: 5, status: "open", context: { entryRating: "Wait for pullback" } }), pnlInr: 120, pnlPct: 0.5, niftyInr: 10, closed: false },
   { trade: trade(3, { symbol: "SBIN", horizon: "LT", status: "open", target: null, stop: null, flag: "Long-term verdict is now Avoid", context: { regime: "Risk-off" } }), pnlInr: 300, pnlPct: 1.2, niftyInr: null, closed: false },
 ];
 const board = (book: "mine" | "shadow", m: MarkedTrade[]): Scoreboard => ({
@@ -60,10 +61,11 @@ const board = (book: "mine" | "shadow", m: MarkedTrade[]): Scoreboard => ({
   overall: summarise("All trades", m),
   byHorizon: breakdown(m, (t) => (t.horizon === "ST" ? "Short term" : "Long term")),
   bySignal: breakdown(m, (t) => t.context.signal ?? "No signal"),
-  byEntry: breakdown(m, (t) => t.context.entryRating ?? "Unknown"),
+  byEntry: breakdown(m, entryLabel),
   byRegime: breakdown(m, (t) => t.context.regime ?? "Nifty above 200 DMA"),
   recent: m,
   pending: 1,
+  limits: limitStats([...m.map((x) => x.trade), trade(9, { variant: "limit", status: "expired", entryPrice: null, qty: null })]),
 });
 
 const checks: [string, string, string[]][] = [
@@ -71,7 +73,7 @@ const checks: [string, string, string[]][] = [
   ["MacroPanel (empty)", renderToStaticMarkup(<MacroPanel macro={{ ...macro, regime: null, inputs: [], note: null, events: [] }} />), ["No regime read yet", "has not run yet"]],
   ["MacroItems", renderToStaticMarkup(<MacroItems sector="Services" index={0} items={[{ event, effect: "helps", why: "Lower fuel costs.", move: event.sectorMoves.Services }]} />), ["helps the sector", "Lower fuel costs.", "4 stocks"]],
   ["MacroItems (empty)", renderToStaticMarkup(<MacroItems sector="Realty" index={0} items={[]} />), ["No macro event in the last 45 days"]],
-  ["Scoreboard", renderToStaticMarkup(<ScoreboardView boards={[board("mine", marked), board("shadow", [])]} quotesAt="2026-11-20T06:19:00Z" />), ["My paper trades", "Shadow portfolio", "Too few trades to judge", "50%", "closed: target", "Long-term verdict is now Avoid", "No trades have filled yet", "Risk-off"]],
+  ["Scoreboard", renderToStaticMarkup(<ScoreboardView boards={[board("mine", marked), board("shadow", [])]} quotesAt="2026-11-20T06:19:00Z" />), ["My paper trades", "Shadow portfolio", "Too few trades to judge", "50%", "closed: target", "Long-term verdict is now Avoid", "No trades have filled yet", "Risk-off", "Wait for pullback, limit order", "Pullback limit orders", "50%</span> (too few to judge)"]],
   ["EntryTag", renderToStaticMarkup(<EntryTag rating="Wait for pullback" />) + renderToStaticMarkup(<EntryTag rating="Extended, don't chase" full />), ["Wait", "Extended, don&#x27;t chase"]],
 ];
 let failed = 0;
