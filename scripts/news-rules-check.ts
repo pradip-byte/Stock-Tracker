@@ -2,7 +2,7 @@
  * Checks the headline rules against known examples.
  *   npx tsx scripts/news-rules-check.ts
  */
-import { lowValueTitle, acronymOf, blockedSource, cleanTitle, companyQuery, flowsFromHeadline, namesCompany, resultDateFromHeadline, shortName, tagMarketHeadline, tagStockHeadline } from "../src/lib/news/rules";
+import { blockedSource, cleanTitle, companyQuery, flowsFromHeadline, fullName, lowValueTitle, namesCompany, resultDateFromHeadline, shortName, tagMarketHeadline, tagStockHeadline } from "../src/lib/news/rules";
 
 let failed = 0;
 const eq = (label: string, got: unknown, want: unknown) => {
@@ -26,17 +26,51 @@ eq("macro FII", tagMarketHeadline("FIIs sell shares worth Rs 3,200 crore; DIIs b
 eq("macro: warns is not war", tagMarketHeadline("Disney plans $3 billion cost cuts, warns of more layoffs"), []);
 eq("macro none", tagMarketHeadline("Hindustan Zinc vs Tata Steel: which metal stock to buy"), []);
 
-// names
-eq("short name: MCX", shortName("Multi Commodity Exchange of India Limited"), "Multi Commodity Exchange");
+// names: full name or a common short name, never the ticker alone
+eq("full name keeps 'of India'", fullName("Bank of India Limited"), "Bank of India");
 eq("short name: Infosys", shortName("Infosys Limited"), "Infosys");
-eq("acronym TCS", acronymOf("TCS", "Tata Consultancy Services Limited"), "TCS");
-eq("acronym MCX", acronymOf("MCX", "Multi Commodity Exchange of India Limited"), "MCX");
-eq("no acronym for IDEA", acronymOf("IDEA", "Vodafone Idea Limited"), null);
-eq("query", companyQuery("TCS", "Tata Consultancy Services Limited"), '"Tata Consultancy Services" OR "TCS" when:7d');
-eq("names: acronym", namesCompany("TCS to hire 40,000 freshers in FY27", "TCS", "Tata Consultancy Services Limited"), true);
-eq("names: unrelated Tata", namesCompany("Tata Motors unveils new SUV", "TCS", "Tata Consultancy Services Limited"), false);
-eq("names: first two words", namesCompany("Reliance Industries shares hit record", "RELIANCE", "Reliance Industries Limited"), true);
-eq("names: ICICI Prudential is not ICICI Bank", namesCompany("ICICI Prudential Life to focus on VNB", "ICICIBANK", "ICICI Bank Limited"), false);
+eq("short name: Coal India is not 'Coal'", shortName("Coal India Limited"), "Coal India");
+eq("short name: Grasim", shortName("Grasim Industries Limited"), "Grasim");
+eq("short name: Page Industries is not 'Page'", shortName("Page Industries Limited"), "Page Industries");
+eq("query: TCS", companyQuery("TCS", "Tata Consultancy Services Limited"), '"Tata Consultancy Services" OR "TCS" when:7d');
+eq("query: default uses the names, not the ticker", companyQuery("PHOENIXLTD", "The Phoenix Mills Limited"), '"Phoenix Mills" when:7d');
+const is = (title: string, symbol: string, name: string) => namesCompany(title, symbol, name);
+eq("TCS short name", is("TCS to hire 40,000 freshers in FY27", "TCS", "Tata Consultancy Services Limited"), true);
+eq("unrelated Tata", is("Tata Motors unveils new SUV", "TCS", "Tata Consultancy Services Limited"), false);
+eq("Reliance Industries", is("Reliance Industries shares hit record", "RELIANCE", "Reliance Industries Limited"), true);
+eq("RIL", is("RIL to invest Rs 75,000 crore in new energy", "RELIANCE", "Reliance Industries Limited"), true);
+eq("Reliance Power is not Reliance Industries", is("Reliance Power wins solar tender", "RELIANCE", "Reliance Industries Limited"), false);
+eq("ICICI Prudential is not ICICI Bank", is("ICICI Prudential Life to focus on VNB", "ICICIBANK", "ICICI Bank Limited"), false);
+eq("oil prices are not Oil India", is("Oil prices rise on Houthi attacks", "OIL", "Oil India Limited"), false);
+eq("Oil India", is("Oil India Q2 profit falls 12%", "OIL", "Oil India Limited"), true);
+eq("a bank is not Bank of India", is("HDFC Bank raises deposit rates", "BANKINDIA", "Bank of India"), false);
+eq("State Bank of India is not Bank of India", is("State Bank of India cuts lending rate", "BANKINDIA", "Bank of India"), false);
+eq("Bank of India", is("Bank of India Q2 net profit up 19%", "BANKINDIA", "Bank of India"), true);
+eq("SBI", is("SBI raises Rs 10,000 crore via bonds", "SBIN", "State Bank of India"), true);
+eq("SBI Life is not SBI", is("SBI Life Q2 VNB grows 14%", "SBIN", "State Bank of India"), false);
+eq("L&T", is("L&T bags large order in Middle East", "LT", "Larsen & Toubro Limited"), true);
+eq("L&T Finance is not L&T", is("L&T Finance Q2 profit rises", "LT", "Larsen & Toubro Limited"), false);
+eq("Supreme Court is not Supreme Industries", is("Supreme Court raps CCI over delay", "SUPREMEIND", "Supreme Industries Limited"), false);
+eq("ticker alone is not enough", is("IDEA: five ways to save tax", "IDEA", "Vodafone Idea Limited"), false);
+eq("US taxpayers' TCS still matches the short name (blocked by source instead)", is("TCS report on federal spending", "TCS", "Tata Consultancy Services Limited"), true);
+
+eq("Tata Power", is("Tata Power commissions 300 MW solar plant", "TATAPOWER", "The Tata Power Company Limited"), true);
+eq("Ola Electric", is("Ola Electric's cash cushion dwindles", "OLAELEC", "Ola Electric Mobility Limited"), true);
+eq("MCX: glitch", is("MCX trading session delayed by one hour due to technical glitch", "MCX", "Multi Commodity Exchange of India Limited"), true);
+eq("BSE: stocks to watch", is("Stocks to watch: Urban Company, BSE, Tata group, HZL", "BSE", "BSE Limited"), true);
+
+// exchanges: must be about the company, not a price or a listing on it
+eq("MCX: gold price on MCX", is("Gold falls 4.49% on MCX as dollar strengthens", "MCX", "Multi Commodity Exchange of India Limited"), false);
+eq("MCX: MCX gold", is("MCX gold nears record, silver plunges", "MCX", "Multi Commodity Exchange of India Limited"), false);
+eq("MCX: crude oil futures", is("Crude oil futures slip on MCX amid weak demand", "MCX", "Multi Commodity Exchange of India Limited"), false);
+eq("MCX: company results", is("MCX Q2 results: net profit doubles on record volumes", "MCX", "Multi Commodity Exchange of India Limited"), true);
+eq("MCX: company shares despite commodity words", is("MCX shares hit record high as gold volumes surge", "MCX", "Multi Commodity Exchange of India Limited"), true);
+eq("MCX: launch", is("MCX to launch electricity futures next month", "MCX", "Multi Commodity Exchange of India Limited"), true);
+eq("MCX: bare mention with no company word", is("Traders flock to MCX amid volatility", "MCX", "Multi Commodity Exchange of India Limited"), false);
+eq("BSE: Sensex headline", is("BSE Sensex jumps 500 points; Nifty above 25,500", "BSE", "BSE Limited"), false);
+eq("BSE: listing venue", is("Lenskart shares list at 12% premium on BSE", "BSE", "BSE Limited"), false);
+eq("BSE: company results", is("BSE Q2 profit triples as derivatives volumes soar", "BSE", "BSE Limited"), true);
+eq("BSE: company shares", is("BSE shares fall 5% after SEBI proposal on weekly expiries", "BSE", "BSE Limited"), true);
 
 // sources
 eq("blocked aggregator", blockedSource("Simply Wall St", "https://simplywall.st"), true);

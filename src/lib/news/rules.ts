@@ -97,55 +97,8 @@ export const MACRO_TAG_INFO: Record<MacroTag, { category: string; exposed: { sec
 
 // ───────────────────────── company matching ─────────────────────────
 
-/** A company name as headlines write it: no "Limited", "Ltd", "of India" tails. */
-export function shortName(name: string): string {
-  return name
-    .replace(/\b(limited|ltd\.?|corporation|corp\.?|company|co\.?)\b/gi, " ")
-    .replace(/\(india\)/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/(\s+(of|and|&|india|of india))+$/i, "")
-    .replace(/[.,&-]+$/g, "")
-    .trim();
-}
-
-/**
- * The symbol, when headlines use it as the company's short form (TCS, MCX, SAIL):
- * all capitals, three to five letters, starting with the name's first letter, and
- * spelt out in order by letters of the full name. "IDEA" for Vodafone Idea fails
- * the first-letter test, so an ordinary word is not mistaken for a company.
- */
-export function acronymOf(symbol: string, name: string): string | null {
-  if (!/^[A-Z]{3,5}$/.test(symbol)) return null;
-  const letters = name.toUpperCase().replace(/[^A-Z]/g, "");
-  if (letters[0] !== symbol[0]) return null;
-  // the name itself already is the symbol ("ITC Limited"): nothing to add
-  if (shortName(name).toUpperCase() === symbol) return null;
-  let at = 0;
-  for (const ch of symbol) {
-    at = letters.indexOf(ch, at);
-    if (at < 0) return null;
-    at++;
-  }
-  return symbol;
-}
-
-/** Google News query for one company, limited to the last week. */
-export function companyQuery(symbol: string, name: string): string {
-  const acr = acronymOf(symbol, name);
-  return `"${shortName(name)}"${acr ? ` OR "${acr}"` : ""} when:7d`;
-}
-
-/** True when the headline actually names the company (its short name, its first two words, or its acronym). */
-export function namesCompany(title: string, symbol: string, name: string): boolean {
-  const t = title.toLowerCase();
-  const short = shortName(name).toLowerCase();
-  if (short && t.includes(short)) return true;
-  const two = short.split(" ").slice(0, 2).join(" ");
-  if (two.includes(" ") && two.length >= 7 && t.includes(two)) return true;
-  const acr = acronymOf(symbol, name);
-  return acr != null && new RegExp(`\\b${acr}\\b`).test(title);
-}
+// Which headline is about which company lives in ./names (full names and common short names, never the ticker alone).
+export { companyQuery, fullName, namesCompany, namesFor, shortName } from "./names";
 
 /** Sites whose pages are generated stock write-ups or re-published content, not reporting. Matched on the publisher's domain or name. */
 export const NEWS_BLOCKED = [
@@ -153,7 +106,7 @@ export const NEWS_BLOCKED = [
   "whalesbook", "investywise", "stockanalysis", "ainvest", "munafasutra", "blinkx", "sahi", "stocktwits", "investing.com", "marketbeat", "defense world",
   "tipranks", "moomoo", "equitypandit", "trendlyne", "tickertape", "insidermonkey", "zacks", "gurufocus", "seeking alpha", "motley fool",
   "kalkine", "global banking & finance", "globalbankingandfinance", "inshorts", "business upturn", "businessupturn", "markhub24", "stockiq",
-  "taxpayers for common sense", "taxpayer.net", "linkedin", "facebook", "youtube", "instagram", "reddit", "quora",
+  "taxpayers for common sense", "taxpayer.net", "linkedin", "facebook", "youtube", "instagram", "reddit", "quora", "yahoo finance", "yahoo! finance",
 ];
 
 export function blockedSource(source: string | null, sourceUrl: string | null): boolean {
@@ -170,7 +123,7 @@ export function lowValueTitle(title: string): boolean {
     /\b(falls?|rises?|gains?|declines?|drops?|jumps?|slips?|advances?) [\d.]+% in \w+day'?s? (session|trade)/i.test(title) ||
     /\b(share|stock) price (today )?(live|updates?)\b|live updates?:|\bprice today\b.*\bcheck\b|investor analysis|stocks? today, \w+ \d+:/i.test(title) ||
     /\b(gold|silver)\b.*\b(price|rate)s?\b/i.test(title) ||
-    /stock price, news, quote/i.test(title)
+    /stock price, news, quote|share price today|market news$|returns chart|\(0P[0-9A-Z]+\.[A-Z]+\)/i.test(title)
   );
 }
 
