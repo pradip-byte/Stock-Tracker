@@ -9,6 +9,7 @@ import { analyseQuarters, eventScore, fiscalLabel, postResultReaction } from "..
 import { dayDiff } from "../format";
 import { isAfterClose, isMarketOpen, istParts, todayIST } from "../market";
 import { getProvider } from "../providers";
+import { momentum12, percentileRank, returnOver } from "../factors";
 import { computeSeries, snapshotAt, technicalScore } from "../signals";
 import { adminDb } from "../supabase/admin";
 import type { Candle, SignalKind } from "../types";
@@ -124,6 +125,15 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     .select("sector,event,roe,debt_to_equity,pe,next_result_date,next_result_is_estimate")
     .eq("symbol", symbol)
     .maybeSingle();
+  // momentum rank against every tracked stock's latest stored value, and the market regime
+  const closes = candles.map((x) => x.close);
+  const mom12 = momentum12(closes, n - 1);
+  const market = await marketContext(db);
+  const { data: uni } = await db.from("stock_latest").select("symbol,mom12").eq("kind", "equity").not("mom12", "is", null).limit(3000);
+  const others = (uni ?? []).filter((x) => x.symbol !== symbol).map((x) => Number(x.mom12));
+  const momRank = mom12 == null ? null : percentileRank(mom12, [...others, mom12]);
+  const stock126 = returnOver(closes, n - 1, 126);
+  const rs6 = stock126 != null && market?.ret126 != null ? Math.round((stock126 - market.ret126) * 100) / 100 : null;
   const { data: ext } = await db
     .from("external_signals")
     .select("score,run_at")
@@ -150,6 +160,9 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     sma200: last.sma200,
     distHi52: last.dist_hi52_pct,
     return1y: n > 251 ? (candles[n - 1].close / candles[n - 251].close - 1) * 100 : null,
+    momRank,
+    rs6,
+    marketUp: market?.up ?? null,
     event: num(ctx?.event),
     external,
     roe: num(ctx?.roe),
@@ -176,6 +189,10 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
       target: t.target,
       stop: t.stop,
       reward_risk: t.rewardRisk,
+      mom12: mom12 == null ? null : Math.round(mom12 * 10000) / 10000,
+      mom_rank: momRank,
+      rs6,
+      market_up: market?.up ?? null,
       verdict_reasons: {
         short: v.shortReasons,
         long: v.longReasons,
@@ -188,6 +205,25 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     { onConflict: "symbol,date" },
   );
   if (e2) throw new Error(`scores upsert: ${e2.message}`);
+}
+
+type MarketContext = { up: boolean; ret126: number | null; date: string };
+let marketCache: { at: number; value: MarketContext | null } | null = null;
+
+/** Nifty 50 against its 200 DMA, and its 6 month return. Cached for five minutes within a process. */
+export async function marketContext(db: SupabaseClient): Promise<MarketContext | null> {
+  if (marketCache && Date.now() - marketCache.at < 5 * 60000) return marketCache.value;
+  const { data } = await db.from("candles_daily").select("date,close").eq("symbol", "NIFTY50").order("date", { ascending: false }).limit(210);
+  const rows = (data ?? []).map((r) => ({ date: r.date as string, close: Number(r.close) })).reverse();
+  let value: MarketContext | null = null;
+  if (rows.length >= 200) {
+    const closes = rows.map((r) => r.close);
+    const last = closes.length - 1;
+    const avg200 = closes.slice(-200).reduce((a, b) => a + b, 0) / 200;
+    value = { up: closes[last] > avg200, ret126: returnOver(closes, last, 126), date: rows[last].date };
+  }
+  marketCache = { at: Date.now(), value };
+  return value;
 }
 
 /**

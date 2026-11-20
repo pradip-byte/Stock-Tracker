@@ -29,6 +29,7 @@
  * Known limit: the universe is today's index members, so companies that fell out
  * of the index are missing. That lifts every return here, baseline included.
  */
+import { momentum12, momentum6 } from "./factors";
 import { sma } from "./indicators";
 import { computeSeries, snapshotAt } from "./signals";
 import type { Candle } from "./types";
@@ -199,22 +200,6 @@ type Prepared = {
   jumps: number[];
 };
 
-/** Standard deviation of daily returns over [from+1, to]. */
-function vol(closes: number[], from: number, to: number): number | null {
-  let n = 0;
-  let s = 0;
-  let s2 = 0;
-  for (let k = from + 1; k <= to; k++) {
-    const r = closes[k] / closes[k - 1] - 1;
-    n++;
-    s += r;
-    s2 += r * r;
-  }
-  if (n < 20) return null;
-  const v = s2 / n - (s / n) ** 2;
-  return v > 0 ? Math.sqrt(v) : null;
-}
-
 function prepare(s: StockData): Prepared {
   const c = s.candles;
   const closes = c.map((x) => x.close);
@@ -230,14 +215,11 @@ function prepare(s: StockData): Prepared {
     if (i >= 63) ret63[i] = (closes[i] / closes[i - 63] - 1) * 100;
     if (i >= 126) {
       ret126[i] = (closes[i] / closes[i - 126] - 1) * 100;
-      // only recompute the volatility-scaled numbers where they are sampled is not worth the complexity: n is small
-      const v = vol(closes, i - 126, i);
-      if (v) mom6[i] = (closes[i] / closes[i - 126] - 1) / v;
+      mom6[i] = momentum6(closes, i);
     }
     if (i >= 252) {
       // 12 months back to 1 month back: the latest month is left out
-      const v = vol(closes, i - 252, i - 21);
-      if (v) mom12[i] = (closes[i - 21] / closes[i - 252] - 1) / v;
+      mom12[i] = momentum12(closes, i);
       let hi = 0;
       for (let k = i - 251; k <= i; k++) if (c[k].high > hi) hi = c[k].high;
       hiDist[i] = hi > 0 ? (1 - closes[i] / hi) * 100 : null;

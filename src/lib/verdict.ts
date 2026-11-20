@@ -6,7 +6,17 @@
  *   65 and above  Favourable
  *   45 to 64      Neutral
  *   below 45      Avoid
- * An active breakdown warning caps the short-term verdict at Avoid.
+ *
+ * The weights follow the Phase 5 signal research (npm run research), which tested
+ * each signal against buying on any random day, after costs, with 2023 onward held out:
+ *  - 12-1 month momentum rank held up out-of-sample, so it carries real weight.
+ *  - 6 month relative strength held up at longer horizons: a small long-term credit.
+ *  - The trend signal showed no edge: no credit.
+ *  - The bounce signal beat same-month peers over about a week but not the market: a small credit.
+ *  - The breakdown warning did not predict lower prices: a small penalty and a risk flag,
+ *    no forced Avoid.
+ *  - Trend and breakout setups did worse when Nifty 50 was below its 200 DMA, in both
+ *    periods: a positive technical score earns no credit then.
  *
  * These are mechanical readings of price history and reported numbers.
  * They are not predictions and not investment advice.
@@ -34,7 +44,13 @@ export type VerdictInput = {
   sma50: number | null;
   sma200: number | null;
   distHi52: number;
-  return1y: number | null; // percent
+  return1y: number | null; // percent (shown, no longer scored)
+  /** 12-1 month momentum rank among tracked stocks, 0 to 100. */
+  momRank: number | null;
+  /** 6 month return minus Nifty 50's, percentage points. */
+  rs6: number | null;
+  /** Nifty 50 above its 200 DMA. Null when unknown. */
+  marketUp: boolean | null;
   event: number | null;
   external: number | null;
   roe: number | null;
@@ -72,30 +88,27 @@ const scopeWord = { stock: "this stock", sector: "its sector", all: "all tracked
 export function computeVerdict(v: VerdictInput): VerdictOutput {
   // ───────────── short term: days to weeks ─────────────
   const s: Factor[] = [];
-  s.push({
-    pts: (v.technical - 50) * 0.8,
-    text: `Technical score is ${v.technical} out of 100.`,
-  });
+  const techPts = (v.technical - 50) * 0.4;
+  if (v.marketUp === false && techPts > 0) {
+    s.push({
+      pts: 0.01,
+      text: `Technical score is ${v.technical} out of 100, but Nifty 50 is below its 200 DMA: trend and breakout setups have not paid in that condition, so it earns no credit.`,
+    });
+  } else s.push({ pts: techPts, text: `Technical score is ${v.technical} out of 100.` });
   if (v.rewardRisk >= 2) s.push({ pts: 6, text: `Reward-to-risk is ${v.rewardRisk.toFixed(1)}x to the next resistance, with the stop under support.` });
   else if (v.rewardRisk < 1) s.push({ pts: -6, text: `Reward-to-risk is only ${v.rewardRisk.toFixed(1)}x: more room to the stop than to the target.` });
 
-  if (v.odds && v.odds.samples >= 8) {
-    const o = v.odds;
-    const name = o.signal === "Bounce" ? "bounce-back" : o.signal === "Trend" ? "trend" : "breakdown";
-    if (o.signal === "Breakdown") {
-      s.push({
-        pts: -clamp((o.hitRate - 50) * 0.4, 0, 8),
-        text: `Breakdown warning is active: after past warnings on ${scopeWord[o.scope]}, the price was lower 20 sessions later ${o.hitRate.toFixed(0)}% of the time (${o.samples} cases).`,
-      });
-    } else {
-      const edge = o.baseline != null ? o.hitRate - o.baseline : o.hitRate - 50;
-      s.push({
-        pts: clamp(edge * 0.5, -8, 8),
-        text: `Measured odds: the ${name} signal on ${scopeWord[o.scope]} was followed by a higher price 20 sessions later ${o.hitRate.toFixed(0)}% of the time (${o.samples} cases${o.baseline != null ? `, against ${o.baseline.toFixed(0)}% for any day` : ""}), average move ${o.avgReturn >= 0 ? "+" : "−"}${Math.abs(o.avgReturn).toFixed(1)}%.`,
-      });
-    }
-  } else if (v.odds) {
-    s.push({ pts: 0, text: `The active signal has only ${v.odds.samples} past cases, too few to measure its odds.` });
+  if (v.momRank != null) {
+    if (v.momRank >= 80) s.push({ pts: 4, text: `12-month momentum is in the top ${Math.max(1, Math.round(100 - v.momRank))}% of tracked stocks, the one factor that kept an edge in testing.` });
+    else if (v.momRank < 20) s.push({ pts: -4, text: `12-month momentum is in the bottom ${Math.max(1, Math.round(v.momRank))}% of tracked stocks: weak momentum has lagged in testing.` });
+  }
+
+  if (v.bounce) {
+    s.push({ pts: 3, text: "Bounce signal is active. In testing it beat other stocks over the next week by about 0.8%, but not the market after costs." });
+  } else if (v.breakdown) {
+    s.push({ pts: -3, text: "Breakdown warning is active. In testing it did not predict lower prices, so it is a risk flag rather than a sell call." });
+  } else if (v.trend) {
+    s.push({ pts: 0.01, text: "Trend signal is active. In testing it showed no edge over buying on any day, so it earns no credit." });
   }
 
   if (v.daysToResult != null && v.daysToResult <= 7) {
@@ -104,16 +117,15 @@ export function computeVerdict(v: VerdictInput): VerdictOutput {
       text: `Results are due in ${v.daysToResult} day${v.daysToResult === 1 ? "" : "s"}${v.resultIsEstimate ? " (estimated date)" : ""}: the price can gap either way.`,
     });
   }
-  let shortScore = Math.round(clamp(50 + s.reduce((a, b) => a + b.pts, 0), 0, 100));
-  if (v.breakdown) shortScore = Math.min(shortScore, 44);
+  const shortScore = Math.round(clamp(50 + s.reduce((a, b) => a + b.pts, 0), 0, 100));
 
   // ───────────── long term: one year and beyond ─────────────
   const l: Factor[] = [];
   if (v.sma50 != null && v.sma200 != null) {
     const gap = Math.abs((v.close / v.sma200 - 1) * 100).toFixed(1);
-    if (v.close > v.sma200 && v.sma50 > v.sma200) l.push({ pts: 12, text: `Long-term trend is up: price is ${gap}% above the 200 DMA and the 50 DMA is above it too.` });
-    else if (v.close < v.sma200 && v.sma50 < v.sma200) l.push({ pts: -12, text: `Long-term trend is down: price is ${gap}% below the 200 DMA and the 50 DMA is below it too.` });
-    else l.push({ pts: v.close > v.sma200 ? 3 : -4, text: `Long-term trend is mixed: price is ${gap}% ${v.close > v.sma200 ? "above" : "below"} the 200 DMA.` });
+    if (v.close > v.sma200 && v.sma50 > v.sma200) l.push({ pts: 6, text: `Long-term trend is up: price is ${gap}% above the 200 DMA and the 50 DMA is above it too.` });
+    else if (v.close < v.sma200 && v.sma50 < v.sma200) l.push({ pts: -6, text: `Long-term trend is down: price is ${gap}% below the 200 DMA and the 50 DMA is below it too.` });
+    else l.push({ pts: v.close > v.sma200 ? 2 : -2, text: `Long-term trend is mixed: price is ${gap}% ${v.close > v.sma200 ? "above" : "below"} the 200 DMA.` });
   } else l.push({ pts: 0, text: "Less than 200 sessions of history, so there is no long-term trend reading yet." });
 
   if (v.event != null) l.push({ pts: (v.event - 50) * 0.4, text: `Event score is ${v.event} out of 100 (results growth, margins and past post-result moves).` });
@@ -132,10 +144,14 @@ export function computeVerdict(v: VerdictInput): VerdictOutput {
     if (v.pe > 80) l.push({ pts: -5, text: `Trailing P/E is ${v.pe.toFixed(0)}x: a lot of growth is already priced in.` });
     else if (v.pe > 0 && v.pe < 25 && (v.event ?? 0) >= 55) l.push({ pts: 3, text: `Trailing P/E is ${v.pe.toFixed(0)}x with results trending well.` });
   }
-  if (v.return1y != null) {
-    if (v.return1y > 20) l.push({ pts: 4, text: `Up ${v.return1y.toFixed(0)}% over the past year.` });
-    else if (v.return1y < -20) l.push({ pts: -5, text: `Down ${Math.abs(v.return1y).toFixed(0)}% over the past year.` });
-  }
+  if (v.momRank != null) {
+    const topPct = Math.max(1, Math.round(100 - v.momRank));
+    if (v.momRank >= 90) l.push({ pts: 10, text: `12-month momentum (leaving out the latest month) is in the top ${topPct}% of tracked stocks. This was the strongest factor in testing, in and out of sample.` });
+    else if (v.momRank >= 80) l.push({ pts: 7, text: `12-month momentum (leaving out the latest month) is in the top ${topPct}% of tracked stocks, a factor that held up in testing.` });
+    else if (v.momRank >= 70) l.push({ pts: 4, text: `12-month momentum is in the top ${topPct}% of tracked stocks.` });
+    else if (v.momRank < 20) l.push({ pts: -7, text: `12-month momentum is in the bottom ${Math.max(1, Math.round(v.momRank))}% of tracked stocks: the weakest fifth lagged in testing.` });
+  } else l.push({ pts: 0, text: "Less than a year of history, so there is no momentum ranking yet." });
+  if (v.rs6 != null && v.rs6 >= 20) l.push({ pts: 3, text: `Beat Nifty 50 by ${v.rs6.toFixed(0)} points over six months.` });
   if (v.external != null) l.push({ pts: (v.external - 50) * 0.25, text: `External score is ${v.external} out of 100 (news, guidance and sector outlook).` });
   const longScore = Math.round(clamp(50 + l.reduce((a, b) => a + b.pts, 0), 0, 100));
 

@@ -14,6 +14,7 @@
     "fundamentals": "tsx scripts/fundamentals.ts",
     "backtest": "tsx scripts/backtest.ts",
     "research": "tsx scripts/research.ts",
+    "recompute": "tsx scripts/recompute.ts",
     "external": "tsx scripts/external.ts"
   },
   "dependencies": {

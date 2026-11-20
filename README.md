@@ -62,6 +62,7 @@ npm run dev                    # http://localhost:3000
 | `npm run fundamentals` | Refreshes results and fundamentals for stocks not updated in the last 20 hours. `-- --force` for all |
 | `npm run backtest` | Backtests every signal on each stock's full history, pools by sector and overall, refreshes verdicts. `-- --force` for all |
 | `npm run research` | Tests every candidate signal against the random-day baseline, in-sample (to 2022) and out-of-sample (2023 on), after costs. Prints tables; changes nothing. |
+| `npm run recompute` | Recomputes indicators, momentum ranks and verdicts for every stock from stored prices (two passes). |
 | `npm run external` | Weekly AI read for everything that is due. `-- --dry-run` lists who would run and why (no API calls). `-- --symbol TCS` runs one stock |
 | `npm run typecheck` | Type-checks from scratch (no incremental cache, which can hide errors) |
 
@@ -120,11 +121,22 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   Returns are close-to-close with no costs, taxes or slippage. Results are stored per stock, per sector and
   for all stocks; a stock with fewer than 8 past cases falls back to its sector, then to all stocks.
 - **Verdicts** (`src/lib/verdict.ts`). Short term (days to weeks) and long term (1 year+), each starting at 50:
-  - *Short:* technical score, reward-to-risk (target = nearest resistance, stop = nearest support less half an
-    ATR), the measured 20-session odds of the active signal against its baseline, and a result due within 7 days.
-    An active breakdown warning caps it at Avoid.
-  - *Long:* price and 50 DMA against the 200 DMA, event score, ROE, debt/equity (ignored for financials),
-    P/E, one-year return, and the external score once Phase 4 exists.
+  - *Short:* technical score (0.4 points per point from 50), reward-to-risk (target = nearest resistance,
+    stop = nearest support less half an ATR), 12-1 month momentum rank (top fifth +4, bottom fifth -4), a
+    result due within 7 days, bounce +3, breakdown -3. The trend signal earns nothing. When Nifty 50 is below
+    its 200 DMA a positive technical score earns nothing either. A breakdown no longer forces Avoid; it
+    raises the risk level instead.
+  - *Long:* 12-1 month momentum rank among tracked stocks (top 10% +10, top 20% +7, top 30% +4, bottom 20%
+    -7), six-month return 20+ points ahead of Nifty 50 (+3), price and 50 DMA against the 200 DMA (+6/-6),
+    event score, ROE, debt/equity (ignored for financials), P/E, and the external score.
+  - These weights come from the **signal research** (`npm run research`, `src/lib/research.ts`): every signal
+    was tested against buying on any day, entering at the next open, after a 0.25% round-trip cost
+    (`TRADE_COST_PCT`), with 2023 onward held out. Only 12-1 month momentum kept a clear edge out-of-sample;
+    six-month relative strength held at longer horizons; the trend, 52-week-high and volume-breakout signals
+    did not beat same-month peers; the bounce signal beat peers for about a week but not the market; the
+    breakdown warning did not predict falls. Post-result drift could not be tested (the data provider has
+    announcement times for about four quarters only). The universe is today's index members, so every
+    return in the research is flattered by survivorship.
   - 65+ Favourable, 45-64 Neutral, under 45 Avoid. The 3-5 largest factors are stored as the reasons.
   - *Overall score:* weighted mean of the scores that exist (technical 0.45, event 0.30, external 0.25).
   - *Risk:* from ATR as a share of price, raised one level when a result is within 7 days and set to High on
