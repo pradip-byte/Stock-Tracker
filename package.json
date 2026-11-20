@@ -13,6 +13,7 @@
     "auth:set-password": "tsx scripts/set-password.ts",
     "fundamentals": "tsx scripts/fundamentals.ts",
     "backtest": "tsx scripts/backtest.ts",
+    "research": "tsx scripts/research.ts",
     "external": "tsx scripts/external.ts"
   },
   "dependencies": {

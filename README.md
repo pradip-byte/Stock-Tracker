@@ -45,6 +45,7 @@ npm run dev                    # http://localhost:3000
 | `CRON_SECRET` | cron routes | Long random string. Sent by pg_cron in the `x-cron-secret` header |
 | `ALLOWED_EMAIL` | sign-in, route guard, seed | The only email that can sign in |
 | `EXTERNAL_SIGNALS_MODEL` | AI read (Phase 4) | Claude model for the AI read. Optional; defaults to `claude-haiku-5-5` |
+| `TRADE_COST_PCT` | Optional. Round-trip trading cost in percent used by the signal research and paper trades. Default 0.25. |
 | `ANTHROPIC_WORKSPACE_ID` | AI read (Phase 4) | Only needed when the API key is not tied to a single workspace; Anthropic then requires the workspace ID on every request |
 | `ANTHROPIC_API_KEY` | AI read (Phase 4) | From console.anthropic.com. Without it the AI read is simply unavailable; everything else works |
 
@@ -60,6 +61,7 @@ npm run dev                    # http://localhost:3000
 | `npm run backfill` | Backfills every stock that is not done yet. Resumable: stop it and run again. `-- --symbol TCS`, `-- --force`, `-- --years 5` |
 | `npm run fundamentals` | Refreshes results and fundamentals for stocks not updated in the last 20 hours. `-- --force` for all |
 | `npm run backtest` | Backtests every signal on each stock's full history, pools by sector and overall, refreshes verdicts. `-- --force` for all |
+| `npm run research` | Tests every candidate signal against the random-day baseline, in-sample (to 2022) and out-of-sample (2023 on), after costs. Prints tables; changes nothing. |
 | `npm run external` | Weekly AI read for everything that is due. `-- --dry-run` lists who would run and why (no API calls). `-- --symbol TCS` runs one stock |
 | `npm run typecheck` | Type-checks from scratch (no incremental cache, which can hide errors) |
 
