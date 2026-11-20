@@ -18,6 +18,7 @@ import { dur, ease, seq } from "../motion/tokens";
 import { useQuote } from "../shell/quotes";
 import { vtName } from "../shell/StockLink";
 import { ExternalCard } from "./ExternalCard";
+import { MacroItems } from "./MacroItems";
 import { Button, Card, EntryTag, Stat, VerdictStamp } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 
@@ -570,6 +571,7 @@ export function StockView({ detail }: { detail: StockDetail }) {
 
             <Results row={row} quarters={quarters} upcoming={upcoming} daysToResult={daysToResult} />
 
+            <MacroItems sector={row.sector} items={detail.macro} index={9} />
             <ExternalCard symbol={row.symbol} read={detail.external} index={9} />
           </div>
         </>

@@ -1,3 +1,4 @@
+import type { MacroView, SectorMacroItem } from "./macro";
 import type { EntryPlan } from "./entry";
 export type Candle = {
   time: string; // YYYY-MM-DD (IST)
@@ -107,6 +108,7 @@ export type DashboardData = {
   highRisk: string[];
   sectors: SectorGroup[];
   counts: { tracked: number; pending: number; bounce: number; trend: number; breakdown: number };
+  macro: MacroView;
 };
 
 /** A risk backed by a news source dated within 90 days of the read. */
@@ -165,6 +167,8 @@ export type StockDetail = {
   /** Backtests for this stock and, as a fallback for thin samples, its sector. */
   backtests: { stock: SignalStats[]; sector: SignalStats[] };
   external: ExternalRead | null;
+  /** Recent macro events that name this stock's sector. */
+  macro: SectorMacroItem[];
 };
 
 export type JobRun = {

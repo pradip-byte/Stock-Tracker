@@ -10,6 +10,7 @@ import { dayDiff } from "../format";
 import { isAfterClose, isMarketOpen, istParts, todayIST } from "../market";
 import { getProvider } from "../providers";
 import { entryPlan, heldBreakout } from "../entry";
+import { runMacroDaily } from "./macro";
 import { openShadowTrades, processPaper } from "./paper";
 import { momentum12, percentileRank, returnOver } from "../factors";
 import { computeSeries, snapshotAt, technicalScore } from "../signals";
@@ -459,6 +460,8 @@ export async function runEod(opts: { force?: boolean; budgetMs?: number } = {}):
       // on a finished session: paper exits from the day's bars, then new shadow trades for tomorrow's open
       if (final) {
         try {
+          // the regime label first, so trades opened tonight record it
+          await runMacroDaily();
           const paper = await processPaper("eod", db);
           const shadow = await openShadowTrades(db);
           await db.from("job_runs").insert({ job: "paper", status: "ok", finished_at: new Date().toISOString(), ok_count: paper.filled + paper.closed + shadow.st.length + shadow.lt.length, fail_count: 0, detail: { ...paper, shadowST: shadow.st, shadowLT: shadow.lt } });

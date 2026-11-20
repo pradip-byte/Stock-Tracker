@@ -103,7 +103,7 @@ const STOCK_SCHEMA = obj({
   confidence: { type: "integer", description: "0 to 100: how well the search results support this read. Use a low number when the searches found little." },
 });
 
-const RULES = `You are a research assistant for one private investor in Indian equities. The output feeds a mechanical scoring model, so accuracy matters more than coverage.
+export const RULES = `You are a research assistant for one private investor in Indian equities. The output feeds a mechanical scoring model, so accuracy matters more than coverage.
 
 Rules:
 - Base every statement on the web search results from this conversation. If the results do not cover something, leave that field empty or neutral. Do not fill gaps from memory.
@@ -116,12 +116,12 @@ Rules:
 
 // ───────────────────────── ai_runs log ─────────────────────────
 
-async function startRun(db: SupabaseClient, kind: "sector" | "stock", key: string, trigger: "weekly" | "manual") {
+export async function startRun(db: SupabaseClient, kind: "sector" | "stock" | "macro", key: string, trigger: "weekly" | "manual") {
   const { data } = await db.from("ai_runs").insert({ kind, key, trigger, status: "running" }).select("id").single();
   return (data?.id as number | undefined) ?? null;
 }
 
-async function finishRun(db: SupabaseClient, id: number | null, started: number, r: ResearchResult) {
+export async function finishRun(db: SupabaseClient, id: number | null, started: number, r: ResearchResult) {
   if (id == null) return;
   await db
     .from("ai_runs")
@@ -140,7 +140,7 @@ async function finishRun(db: SupabaseClient, id: number | null, started: number,
     .eq("id", id);
 }
 
-const dedupe = (sources: SearchSource[]) => [...new Map(sources.map((s) => [s.url, s])).values()].slice(0, 30);
+export const dedupe = (sources: SearchSource[]) => [...new Map(sources.map((s) => [s.url, s])).values()].slice(0, 30);
 
 /** Turn a search result's page age ("April 30, 2026", "112 days ago", "3 weeks ago") into a date, or null. */
 export function pageDate(pageAge: string | null | undefined): string | null {
@@ -159,7 +159,7 @@ export function pageDate(pageAge: string | null | undefined): string | null {
 }
 
 /** The publication date of a source if it is known and no more than `maxDays` old, otherwise null. */
-function recentDate(published: unknown, pageAge: string | null, maxDays: number): string | null {
+export function recentDate(published: unknown, pageAge: string | null, maxDays: number): string | null {
   const today = todayIST();
   const fromModel = /^\d{4}-\d{2}-\d{2}$/.test(str(published, 10)) ? str(published, 10) : null;
   const fromSearch = pageDate(pageAge);

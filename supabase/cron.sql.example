@@ -12,7 +12,7 @@ create extension if not exists pg_net;
 
 -- Remove earlier versions of these jobs so the script can be re-run safely
 select cron.unschedule(jobname) from cron.job
-where jobname in ('stock-quotes-15m', 'stock-eod', 'stock-eod-late', 'stock-fundamentals', 'stock-backtest', 'stock-external', 'stock-job-runs-cleanup');
+where jobname in ('stock-quotes-15m', 'stock-eod', 'stock-eod-late', 'stock-fundamentals', 'stock-backtest', 'stock-external', 'stock-macro', 'stock-macro-note', 'stock-job-runs-cleanup');
 
 -- Quotes: every 15 minutes, Mon-Fri, 03:00-10:59 UTC (08:30-16:29 IST).
 -- The route itself only does work between 09:15 and 15:30 IST and skips otherwise.
@@ -96,6 +96,36 @@ select cron.schedule(
   $$
   select net.http_get(
     url := 'https://YOUR-APP.vercel.app/api/cron/external',
+    headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
+    timeout_milliseconds := 295000
+  );
+  $$
+);
+
+-- Macro numbers, breadth, regime label and event follow-up: Mon-Fri 12:30 UTC (18:00 IST).
+-- The end-of-day job already runs this when it finishes; this call is a safety net and also
+-- fills in what the market did after each logged event.
+select cron.schedule(
+  'stock-macro',
+  '30 12 * * 1-5',
+  $$
+  select net.http_get(
+    url := 'https://YOUR-APP.vercel.app/api/cron/macro',
+    headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
+    timeout_milliseconds := 58000
+  );
+  $$
+);
+
+-- Weekly AI macro note: Sundays 01:30 UTC (07:00 IST). One call, at most 3 web searches
+-- (a few cents). THIS JOB SPENDS MONEY on the Anthropic API. Skipped if a note was written
+-- in the last 6 days. Leave it out to run `npm run macro -- --note` by hand instead.
+select cron.schedule(
+  'stock-macro-note',
+  '30 1 * * 0',
+  $$
+  select net.http_get(
+    url := 'https://YOUR-APP.vercel.app/api/cron/macro-note',
     headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET'),
     timeout_milliseconds := 295000
   );

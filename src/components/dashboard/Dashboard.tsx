@@ -1,6 +1,7 @@
 "use client";
 
 import clsx from "clsx";
+import { MacroPanel } from "./MacroPanel";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { changePct, inr, pct, toneOf } from "@/lib/format";
@@ -458,6 +459,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
     <div className="flex flex-col gap-3">
       <Pulse data={data} />
       <div className="grid grid-cols-12 gap-3">
+        <MacroPanel macro={data.macro} />
         <Setups data={data} />
         <LongTerm data={data} />
         <Card

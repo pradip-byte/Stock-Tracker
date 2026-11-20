@@ -64,6 +64,7 @@ npm run dev                    # http://localhost:3000
 | `npm run backtest` | Backtests every signal on each stock's full history, pools by sector and overall, refreshes verdicts. `-- --force` for all |
 | `npm run research` | Tests every candidate signal against the random-day baseline, in-sample (to 2022) and out-of-sample (2023 on), after costs. Prints tables; changes nothing. |
 | `npm run recompute` | Recomputes indicators, momentum ranks and verdicts for every stock from stored prices (two passes). |
+| `npm run macro` | Daily macro numbers, breadth, regime label and event follow-up. `-- --backfill` rebuilds the regime history; `-- --note` writes the weekly AI macro note (spends money). |
 | `npm run external` | Weekly AI read for everything that is due. `-- --dry-run` lists who would run and why (no API calls). `-- --symbol TCS` runs one stock |
 | `npm run typecheck` | Type-checks from scratch (no incremental cache, which can hide errors) |
 
@@ -139,6 +140,27 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
     and loss, expectancy, total return and the same money in Nifty 50 over the same dates, broken down by
     horizon, signal, entry rating and market regime. Fewer than 30 closed trades shows "too few trades to
     judge".
+- **Macro view** (`src/lib/macro.ts`, `src/lib/jobs/macro.ts`).
+  - *Daily numbers*, stored with history: Nifty 50 and India VIX (already tracked), plus Brent crude, USD/INR,
+    S&P 500 and the US 10-year yield from Yahoo (`macro_series`). Breadth is computed from our own stocks: the
+    share above their 50 and 200 DMA. Everything for a session is kept in `macro_daily`.
+  - *Regime label* on the dashboard: Risk-on, Neutral or Risk-off, from four inputs (Nifty 50 against its
+    200 DMA, breadth, VIX level, VIX against its 20-day average), each worth +1, 0 or -1. The inputs and
+    their points are shown. The thresholds are conventional, not fitted, and the research found regime did
+    not give a consistent answer across periods, so the label is context. The only rule acting on the market
+    state is that a positive technical score earns no short-term credit while Nifty 50 is below its 200 DMA.
+    Short-term verdicts are not capped at Neutral in Risk-off.
+  - *Weekly AI macro note:* same model and source rules as the external job, at most 3 searches. Three to five
+    events moving Indian markets, each with a dated source from the last 21 days, the sectors each helps or
+    hurts (chosen from our own sector list) and why, and FII/DII flow figures when a source states them. If
+    the allowlisted sites give no usable event it retries once with open search and is marked low-grade.
+    The call is logged in the admin spend log as kind `macro`.
+  - *Event log* (`macro_events`): for every event, the move in Nifty 50 and in each named sector (equal-weight
+    average of our stocks in it) over the next 1, 5 and 20 sessions, measured from the last close before the
+    event. The page shows what happened next to what the AI reasoned.
+  - *Stock page:* events from the last 45 days that name the stock's sector.
+  - `npm run macro` runs the daily step, `-- --backfill` rebuilds the regime history from stored prices,
+    `-- --note` writes the AI note now.
 - **Verdicts** (`src/lib/verdict.ts`). Short term (days to weeks) and long term (1 year+), each starting at 50:
   - *Short:* technical score (0.4 points per point from 50), reward-to-risk (target = nearest resistance,
     stop = nearest support less half an ATR), 12-1 month momentum rank (top fifth +4, bottom fifth -4), a

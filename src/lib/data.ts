@@ -1,5 +1,6 @@
 /** Read side. Uses the signed-in user's client, so RLS decides what comes back. */
 import { analyseQuarters } from "./events";
+import { MACRO_SERIES, type MacroEvent, type MacroPoint, type MacroView, type SectorMacroItem } from "./macro";
 import { todayIST } from "./market";
 import { breakdown, mapTrade, niftyPnl, pnlAt, summarise, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
 import { userDb } from "./supabase/server";
@@ -208,6 +209,7 @@ export async function getDashboard(): Promise<DashboardData> {
       trend: ready.filter((r) => r.trend).length,
       breakdown: ready.filter((r) => r.breakdown).length,
     },
+    macro: await getMacro(),
   };
 }
 
@@ -251,7 +253,7 @@ export async function getStockDetail(symbol: string): Promise<StockDetail | null
     n(r.fiscal_year_end_month),
   ).slice(-8);
   const [stock, sector] = await Promise.all([getBacktests(db, "stock", symbol), getBacktests(db, "sector", r.sector)]);
-  return { row: mapRow(r), candles, quarters, today: todayIST(), backtests: { stock, sector }, external: await getExternal(db, symbol) };
+  return { row: mapRow(r), candles, quarters, today: todayIST(), backtests: { stock, sector }, external: await getExternal(db, symbol), macro: await getSectorMacro(db, r.sector ?? null) };
 }
 
 /** Risks are shown only when they carry a source link and date; older rows stored plain strings. */
@@ -393,4 +395,75 @@ export async function getScoreboards(): Promise<{ boards: Scoreboard[]; quotesAt
     };
   });
   return { boards, quotesAt };
+}
+
+// ───────────────────────── macro view ─────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapEvent(e: any): MacroEvent {
+  return {
+    id: Number(e.id),
+    eventDate: e.event_date,
+    title: e.title,
+    category: e.category,
+    summary: e.summary ?? "",
+    url: e.url,
+    published: e.published,
+    helped: Array.isArray(e.helped) ? e.helped : [],
+    hurt: Array.isArray(e.hurt) ? e.hurt : [],
+    nifty: { d1: n(e.nifty_1d), d5: n(e.nifty_5d), d20: n(e.nifty_20d) },
+    sectorMoves: e.sector_moves ?? {},
+  };
+}
+
+/** The latest regime read, the macro numbers with their 1- and 20-session changes, and the latest AI macro note. */
+export async function getMacro(): Promise<MacroView> {
+  const db = await userDb();
+  const [{ data: d }, { data: note }] = await Promise.all([
+    db.from("macro_daily").select("*").order("date", { ascending: false }).limit(1).maybeSingle(),
+    db.from("macro_notes").select("id,run_at,summary,flows,low_grade_sources").order("run_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const point = (rows: { date: string; close: number }[]): MacroPoint | null => {
+    if (!rows.length) return null;
+    const last = rows[0];
+    const ch = (k: number) => (rows[k] ? Math.round((last.close / rows[k].close - 1) * 10000) / 100 : null);
+    return { value: last.close, date: last.date, chg1: ch(1), chg20: ch(20) };
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rowsOf = (data: any[] | null) => (data ?? []).map((r) => ({ date: r.date as string, close: Number(r.close) }));
+  const fromCandles = async (symbol: string) => rowsOf((await db.from("candles_daily").select("date,close").eq("symbol", symbol).order("date", { ascending: false }).limit(21)).data);
+  const fromSeries = async (id: string) => rowsOf((await db.from("macro_series").select("date,close").eq("series", id).order("date", { ascending: false }).limit(21)).data);
+  const [nifty, vix, ...outside] = await Promise.all([fromCandles(INDEX_SYMBOLS[0]), fromCandles(INDEX_SYMBOLS[1]), ...MACRO_SERIES.map((s) => fromSeries(s.id))]);
+  const events = note ? ((await db.from("macro_events").select("*").eq("note_id", note.id).order("id")).data ?? []).map(mapEvent) : [];
+  return {
+    date: d?.date ?? null,
+    regime: d?.regime ?? null,
+    score: n(d?.regime_score),
+    inputs: Array.isArray(d?.inputs) ? d.inputs : [],
+    breadth50: n(d?.breadth50),
+    breadth200: n(d?.breadth200),
+    breadthCount: n(d?.breadth_count),
+    series: [
+      { id: "NIFTY50", label: "Nifty 50", unit: "", point: point(nifty) },
+      { id: "INDIAVIX", label: "India VIX", unit: "", point: point(vix) },
+      ...MACRO_SERIES.map((s, i) => ({ id: s.id as string, label: s.label as string, unit: s.unit as string, point: point(outside[i]) })),
+    ],
+    note: note ? { runAt: note.run_at, summary: note.summary ?? "", lowGrade: !!note.low_grade_sources, flows: note.flows ?? null } : null,
+    events,
+  };
+}
+
+/** Macro events from the last 45 days that name this sector as helped or hurt. */
+export async function getSectorMacro(db: SupabaseClient, sector: string | null): Promise<SectorMacroItem[]> {
+  if (!sector) return [];
+  const since = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+  const { data } = await db.from("macro_events").select("*").gte("event_date", since).order("event_date", { ascending: false }).limit(60);
+  const out: SectorMacroItem[] = [];
+  for (const e of (data ?? []).map(mapEvent)) {
+    const helped = e.helped.find((x) => x.sector === sector);
+    const hurt = e.hurt.find((x) => x.sector === sector);
+    if (!helped && !hurt) continue;
+    out.push({ event: e, effect: helped ? "helps" : "hurts", why: (helped ?? hurt)!.why, move: e.sectorMoves[sector] ?? null });
+  }
+  return out.slice(0, 6);
 }
