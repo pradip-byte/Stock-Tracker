@@ -76,7 +76,8 @@ const ALIASES: Record<string, Name[]> = {
   IRCTC: ["IRCTC"],
   IREDA: ["IREDA"],
   IRFC: ["IRFC"],
-  ITC: [/\bITC\b(?! Hotels)/],
+  // "ITC" is also input tax credit in every GST story
+  ITC: [/^(?!.*\b(GST|CBIC|input tax credit|tax credit)\b).*\bITC\b(?! Hotels)/i],
   JINDALSTEL: ["Jindal Steel"],
   JIOFIN: ["Jio Financial"],
   JUBLFOOD: ["Jubilant FoodWorks"],
@@ -137,7 +138,8 @@ const ALIASES: Record<string, Name[]> = {
   TMCV: [/Tata Motors(?! Passenger| PV)/],
   TMPV: ["Tata Motors Passenger", "Tata Motors PV"],
   TORNTPHARM: ["Torrent Pharma"],
-  TRENT: [/\bTrent\b(?! Boult| Alexander)/],
+  // Trent is also a common first name and a Rolls-Royce engine: the headline must have retail or market context
+  TRENT: [/\bTrent\b(?=.*\b(Tata|Westside|Zudio|shares?|stock|Q[1-4]|retail(er)?|Noel|Nifty|Sensex)\b)|\b(Tata|Westside|Zudio|Nifty|Sensex|stocks?)\b.*\bTrent\b(?! 1000| XWB| 7000)/],
   ULTRACEMCO: ["UltraTech Cement", "UltraTech"],
   UNIONBANK: ["Union Bank of India", "Union Bank"],
   UNITDSPR: ["United Spirits"],
@@ -193,6 +195,9 @@ const COMPANY_WORDS = /\b(shares?|stock|share price|scrip|q[1-4]|results?|profit
 /** Words too general to stand for a company on their own once "India" or "Corporation" is dropped. */
 const GENERIC = new Set(["bank", "oil", "coal", "container", "steel", "power", "state", "union", "life", "indian", "national", "general", "united", "tata", "adani", "bajaj", "hdfc", "icici", "sbi", "reliance", "max", "info", "page", "supreme", "premier", "prestige", "solar", "federal", "motor", "energy", "finance"]);
 
+/** Companies whose registered name also begins another company's name or is an everyday word, so only the listed patterns are used. */
+const ONLY_LISTED = new Set(["TMCV", "ITC", "NTPC", "SIEMENS", "VEDL", "TRENT", "M&M", "ETERNAL", "ASTRAL", "BOSCHLTD", "RECLTD"]);
+
 /** General terms that stay general even in pairs. */
 const STRICT = new Set(["bank", "oil", "coal", "container", "steel", "power", "state", "union", "life", "indian", "national", "general", "united", "federal", "motor", "energy", "finance", "india", "insurance"]);
 
@@ -235,7 +240,7 @@ export function namesFor(symbol: string, name: string): Name[] {
     // companies' names, so for those only the listed patterns are used
     const words = full.split(" ").filter((w) => !/^(of|and|&|india)$/i.test(w));
     const general = words.every((w) => GENERIC.has(w.toLowerCase()));
-    return general ? listed : [full, ...listed];
+    return general || ONLY_LISTED.has(symbol) ? listed : [full, ...listed];
   }
   const short = shortName(name);
   return short === full ? [full] : [full, short];

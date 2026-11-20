@@ -1,3 +1,4 @@
+import type { NewsTone } from "./news/rules";
 import type { MacroView, SectorMacroItem } from "./macro";
 import type { EntryPlan } from "./entry";
 export type Candle = {
@@ -89,6 +90,8 @@ export type StockRow = {
   /** Nifty 50 above its 200 DMA when the score was computed. */
   marketUp: boolean | null;
   entry: EntryPlan | null;
+  /** 30-day news tone from keyword rules. Shown and recorded on paper trades; never part of a verdict. */
+  newsTone: NewsTone;
 };
 
 export type SectorGroup = { sector: string; symbols: string[] };

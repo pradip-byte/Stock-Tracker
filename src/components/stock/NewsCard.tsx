@@ -2,7 +2,9 @@
 
 import clsx from "clsx";
 import { useState } from "react";
+import { inr, shortDate } from "@/lib/format";
 import { fmtIST } from "@/lib/market";
+import { brokerCall, type NewsTone } from "@/lib/news/rules";
 import type { NewsItem } from "@/lib/types";
 import { Card } from "../ui/core";
 
@@ -33,7 +35,7 @@ function Row({ n }: { n: NewsItem }) {
  * Headlines from free news feeds. Only the headline, publisher, time and link
  * are stored; the link opens the publisher's own page. Tags come from keywords.
  */
-export function NewsCard({ news, index }: { news: NewsItem[]; index: number }) {
+export function NewsCard({ news, index, tone }: { news: NewsItem[]; index: number; tone: NewsTone }) {
   const [filter, setFilter] = useState<string | null>(null);
   const [showOther, setShowOther] = useState(false);
   const tagged = news.filter((n) => n.tags.some((t) => t !== "other"));
@@ -41,6 +43,12 @@ export function NewsCard({ news, index }: { news: NewsItem[]; index: number }) {
   const counts = TAGS.map((t) => [t, tagged.filter((n) => n.tags.includes(t)).length] as const).filter(([, c]) => c > 0);
   const shown = (filter ? tagged.filter((n) => n.tags.includes(filter)) : tagged).slice(0, 14);
   const newest = news[0]?.publishedAt ?? null;
+  // broker calls read out of rating-change headlines: only what the headline itself states
+  const calls = news
+    .filter((n) => n.tags.includes("rating change"))
+    .map((n) => ({ n, c: brokerCall(n.title) }))
+    .filter((x): x is { n: NewsItem; c: NonNullable<ReturnType<typeof brokerCall>> } => x.c != null)
+    .slice(0, 8);
   return (
     <Card
       index={index}
@@ -52,6 +60,48 @@ export function NewsCard({ news, index }: { news: NewsItem[]; index: number }) {
         <p className="text-[12.5px] text-steel">No headline naming this company in the last 60 days, or its news has not been fetched yet. The feeds are read once a day.</p>
       ) : (
         <div className="grid grid-cols-12 gap-x-8 gap-y-4">
+          <div className="col-span-12 flex flex-wrap items-end gap-x-6 gap-y-2 border-b border-line pb-3">
+            <div>
+              <span className="label block text-[10px] text-steel">News tone, last 30 days</span>
+              <span className={clsx("display text-3xl", tone.label === "Quiet" ? "text-steel" : "text-ink")}>{tone.label}</span>
+            </div>
+            <span className="num pb-1 text-[11px] text-steel">
+              {tone.positive} positive, {tone.negative} negative, {Math.max(0, tone.total - tone.positive - tone.negative)} neutral of {tone.total} headlines.
+              Keyword count, not AI, and not part of any verdict.
+            </span>
+          </div>
+          {calls.length > 0 && (
+            <div className="col-span-12">
+              <span className="label text-[10px] text-amber">Broker calls, from headlines</span>
+              <div className="mt-1.5 overflow-x-auto">
+                <div className="min-w-[560px]">
+                  <div className="label grid h-7 grid-cols-[84px_minmax(120px,1fr)_110px_90px_minmax(120px,1.4fr)] items-center gap-3 border-b border-line text-[10px] text-steel">
+                    <span>Date</span>
+                    <span>Broker</span>
+                    <span>Call</span>
+                    <span className="justify-self-end">Target</span>
+                    <span>Reported by</span>
+                  </div>
+                  {calls.map(({ n, c }) => (
+                    <a
+                      key={n.id}
+                      href={n.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title={n.title}
+                      className="grid h-8 grid-cols-[84px_minmax(120px,1fr)_110px_90px_minmax(120px,1.4fr)] items-center gap-3 border-b border-line/70 hover:bg-metal-2/60"
+                    >
+                      <span className="num text-[11px] text-steel">{shortDate(n.publishedAt.slice(0, 10))}</span>
+                      <span className={clsx("truncate text-[12px]", c.broker ? "text-ink" : "text-steel")}>{c.broker ?? "not named"}</span>
+                      <span className={clsx("num text-[11px]", c.call ? "text-ink" : "text-steel")}>{c.call ?? "not stated"}</span>
+                      <span className="num justify-self-end text-[12px] text-ink">{c.target != null ? `₹${inr(c.target, 0)}` : <span className="text-steel">not stated</span>}</span>
+                      <span className="num truncate text-[10px] text-steel">{n.source ?? "source not stated"}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="col-span-12 lg:col-span-7">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="label mr-1 text-[10px] text-amber">Tagged</span>
@@ -93,7 +143,8 @@ export function NewsCard({ news, index }: { news: NewsItem[]; index: number }) {
       )}
       <p className="mt-3 text-[11px] leading-snug text-steel">
         Headlines come from Google News and the Economic Times, Business Standard and Mint feeds. Only the headline, publisher, time and link are
-        kept; the link opens the publisher&apos;s page. Tags are keyword matches, not AI, so they can be wrong. Headlines are not scored.
+        kept; the link opens the publisher&apos;s page. Tags, tone and broker calls are read from the headline by keyword rules, not AI, so they
+        can be wrong; open the link to check. None of this feeds a verdict.
       </p>
     </Card>
   );

@@ -9,6 +9,7 @@ import { MacroPanel } from "../src/components/dashboard/MacroPanel";
 import { ScoreboardView } from "../src/components/scoreboard/ScoreboardView";
 import { MacroItems } from "../src/components/stock/MacroItems";
 import { NewsCard } from "../src/components/stock/NewsCard";
+import { toneLabel } from "../src/lib/news/rules";
 import { EntryTag } from "../src/components/ui/core";
 import type { Scoreboard } from "../src/lib/data";
 import { regimeOf, type MacroEvent, type MacroView } from "../src/lib/macro";
@@ -54,7 +55,7 @@ const trade = (id: number, over: Partial<PaperTrade>): PaperTrade => ({
   id, book: "mine", horizon: "ST", symbol: "INFY", status: "closed", amount: 25000, requestedAt: "2026-11-20T06:00:00Z", fillRule: "quote", variant: "market", limitPrice: null, limitSessions: null,
   entryAt: "2026-11-20T06:19:00Z", entryPrice: 1111.5, qty: 22.49, niftyEntry: 25563, target: 1178, stop: 1078, maxSessions: 20, closeRequestedAt: null,
   exitAt: null, exitPrice: null, exitReason: null, niftyExit: null, costPct: 0.25, pnlInr: null, pnlPct: null, flag: null,
-  context: { signal: "Trend", entryRating: "Good entry", marketUp: true, external: 62 }, ...over,
+  context: { signal: "Trend", entryRating: "Good entry", marketUp: true, external: 62, newsTone: { label: "Positive", positive: 6, negative: 1, total: 20 } }, ...over,
 });
 const marked: MarkedTrade[] = [
   { trade: trade(1, { exitPrice: 1178, exitReason: "target", exitAt: "2026-11-25T10:00:00Z" }), pnlInr: 1430, pnlPct: 5.72, niftyInr: 210, closed: true },
@@ -70,6 +71,7 @@ const board = (book: "mine" | "shadow", m: MarkedTrade[]): Scoreboard => ({
   byEntry: breakdown(m, entryLabel),
   byRegime: breakdown(m, (t) => t.context.regime ?? "Nifty above 200 DMA"),
   byExternal: breakdown(m, externalBand),
+  byTone: breakdown(m, (t) => (t.context.newsTone ? `News tone: ${t.context.newsTone.label}` : "No tone recorded")),
   recent: m,
   pending: 1,
   limits: limitStats([...m.map((x) => x.trade), trade(9, { variant: "limit", status: "expired", entryPrice: null, qty: null })]),
@@ -80,9 +82,9 @@ const checks: [string, string, string[]][] = [
   ["MacroPanel (empty)", renderToStaticMarkup(<MacroPanel macro={{ ...macro, regime: null, inputs: [], note: null, events: [], headlines: [], flows: null }} />), ["No regime read yet", "No headline in the last four days stated them", "No events logged yet"]],
   ["MacroItems", renderToStaticMarkup(<MacroItems sector="Services" index={0} items={[{ event, effect: "helps", why: "Lower fuel costs.", move: event.sectorMoves.Services }]} />), ["helps the sector", "Lower fuel costs.", "4 stocks"]],
   ["MacroItems (empty)", renderToStaticMarkup(<MacroItems sector="Realty" index={0} items={[]} />), ["No macro event in the last 45 days"]],
-  ["Scoreboard", renderToStaticMarkup(<ScoreboardView boards={[board("mine", marked), board("shadow", [])]} quotesAt="2026-11-20T06:19:00Z" />), ["My paper trades", "Shadow portfolio", "Too few trades to judge", "50%", "closed: target", "Long-term verdict is now Avoid", "No trades have filled yet", "Risk-off", "Wait for pullback, limit order", "Pullback limit orders", "By external score at entry", "External above 60", "No read", "50%</span> (too few to judge)"]],
-  ["NewsCard", renderToStaticMarkup(<NewsCard index={0} news={[{ id: 1, title: "Infosys Q2 net profit rises 6%", source: "Mint", url: "https://news.google.com/a", publishedAt: "2026-10-23T11:00:00Z", tags: ["results"] }, { id: 2, title: "Infosys opens new campus", source: "Business Standard", url: "https://news.google.com/b", publishedAt: "2026-10-30T11:00:00Z", tags: ["other"] }]} />), ["results 1", "Infosys Q2 net profit rises 6%", "Other headlines (1)", "Infosys opens new campus", "not AI"]],
-  ["NewsCard (empty)", renderToStaticMarkup(<NewsCard index={0} news={[]} />), ["No headline naming this company"]],
+  ["Scoreboard", renderToStaticMarkup(<ScoreboardView boards={[board("mine", marked), board("shadow", [])]} quotesAt="2026-11-20T06:19:00Z" />), ["My paper trades", "Shadow portfolio", "Too few trades to judge", "50%", "closed: target", "Long-term verdict is now Avoid", "No trades have filled yet", "Risk-off", "Wait for pullback, limit order", "Pullback limit orders", "By external score at entry", "By news tone at entry", "News tone: Positive", "No tone recorded", "External above 60", "No read", "50%</span> (too few to judge)"]],
+  ["NewsCard", renderToStaticMarkup(<NewsCard index={0} tone={toneLabel(6, 1, 20)} news={[{ id: 3, title: "CLSA downgrades Infosys, cuts target price to Rs 1,250", source: "CNBC TV18", url: "https://news.google.com/c", publishedAt: "2026-10-27T11:00:00Z", tags: ["rating change"] }, { id: 1, title: "Infosys Q2 net profit rises 6%", source: "Mint", url: "https://news.google.com/a", publishedAt: "2026-10-23T11:00:00Z", tags: ["results"] }, { id: 2, title: "Infosys opens new campus", source: "Business Standard", url: "https://news.google.com/b", publishedAt: "2026-10-30T11:00:00Z", tags: ["other"] }]} />), ["results 1", "Infosys Q2 net profit rises 6%", "Other headlines (1)", "Infosys opens new campus", "not AI", "Positive", "6 positive, 1 negative", "Broker calls", "CLSA", "Downgrade", "₹1,250"]],
+  ["NewsCard (empty)", renderToStaticMarkup(<NewsCard index={0} news={[]} tone={toneLabel(0, 0, 0)} />), ["No headline naming this company"]],
   ["EntryTag", renderToStaticMarkup(<EntryTag rating="Wait for pullback" />) + renderToStaticMarkup(<EntryTag rating="Extended, don't chase" full />), ["Wait", "Extended, don&#x27;t chase"]],
 ];
 let failed = 0;

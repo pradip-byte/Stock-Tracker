@@ -25,6 +25,7 @@ import {
   tagMarketHeadline,
   tagStockHeadline,
   titleKey,
+  toneOfHeadline,
   type MacroTag,
 } from "../news/rules";
 import { istParts, todayIST } from "../market";
@@ -39,7 +40,7 @@ const PAUSE_MS = 2000; // between Google News requests, one at a time. About 200
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type Row = { symbol: string; title: string; title_key: string; source: string | null; url: string; published_at: string; tags: string[] };
+type Row = { symbol: string; title: string; title_key: string; source: string | null; url: string; published_at: string; tags: string[]; tone?: number };
 
 async function store(db: SupabaseClient, rows: Row[]): Promise<number> {
   let added = 0;
@@ -77,11 +78,11 @@ export async function fetchMarketNews(db: SupabaseClient): Promise<{ items: (Fee
   const rows: Row[] = [];
   for (const i of distinct) {
     const tags = lowValueTitle(i.title) ? [] : tagMarketHeadline(i.title);
-    if (tags.length) rows.push({ symbol: MARKET, title: i.title.slice(0, 300), title_key: titleKey(i.title), source: i.publisher, url: i.url, published_at: i.published!, tags });
+    if (tags.length) rows.push({ symbol: MARKET, title: i.title.slice(0, 300), title_key: titleKey(i.title), source: i.publisher, url: i.url, published_at: i.published!, tags, tone: 0 });
   }
   // from the flows search only headlines that actually carry a figure are kept
   for (const i of flowItems) {
-    if (flowsFromHeadline(i.title)) rows.push({ symbol: MARKET, title: i.title.slice(0, 300), title_key: titleKey(i.title), source: i.publisher, url: i.url, published_at: i.published!, tags: ["FII"] });
+    if (flowsFromHeadline(i.title)) rows.push({ symbol: MARKET, title: i.title.slice(0, 300), title_key: titleKey(i.title), source: i.publisher, url: i.url, published_at: i.published!, tags: ["FII"], tone: 0 });
   }
   const added = await store(db, unique(rows));
 
@@ -143,7 +144,7 @@ async function fetchStockNews(db: SupabaseClient, stock: StockRef, market: (Feed
   const rows: Row[] = [];
   const dated: { date: string; title: string; url: string; published: string }[] = [];
   const add = (title: string, source: string | null, url: string, published: string) => {
-    rows.push({ symbol: stock.symbol, title: title.slice(0, 300), title_key: titleKey(title), source, url, published_at: published, tags: tagStockHeadline(title) });
+    rows.push({ symbol: stock.symbol, title: title.slice(0, 300), title_key: titleKey(title), source, url, published_at: published, tags: tagStockHeadline(title), tone: toneOfHeadline(title) });
     const date = resultDateFromHeadline(title, published);
     if (date) dated.push({ date, title, url, published });
   };

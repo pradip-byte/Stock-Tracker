@@ -26,6 +26,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isMarketOpen, istParts, todayIST } from "../market";
+import { toneLabel } from "../news/rules";
 import { mapTrade, pnlAt, type PaperBook, type PaperContext, type PaperHorizon, type PaperTrade } from "../paper";
 import { tradeCostPct } from "../settings";
 import { adminDb } from "../supabase/admin";
@@ -80,6 +81,13 @@ async function regimeLabel(db: SupabaseClient): Promise<string | null> {
   return error ? null : ((data?.regime as string | undefined) ?? null);
 }
 
+/** The stock's 30-day keyword news tone, to record with the trade. Null if the tone view cannot be read. */
+async function newsToneOf(db: SupabaseClient, symbol: string) {
+  const { data, error } = await db.from("news_tone").select("positive,negative,total").eq("symbol", symbol).maybeSingle();
+  if (error) return null;
+  return toneLabel(Number(data?.positive ?? 0), Number(data?.negative ?? 0), Number(data?.total ?? 0));
+}
+
 /** Request a paper trade. It is filled later by the next quote, never at the price on screen. */
 export async function requestTrade(
   book: PaperBook,
@@ -128,7 +136,7 @@ export async function requestTrade(
       stop,
       max_sessions: horizon === "ST" ? ST_MAX_SESSIONS : null,
       cost_pct: tradeCostPct(),
-      context: contextOf(r, await regimeLabel(db)),
+      context: { ...contextOf(r, await regimeLabel(db)), newsTone: await newsToneOf(db, symbol) },
     })
     .select("id")
     .single();

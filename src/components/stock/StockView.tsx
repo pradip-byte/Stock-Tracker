@@ -586,7 +586,7 @@ export function StockView({ detail }: { detail: StockDetail }) {
 
             <Results row={row} quarters={quarters} upcoming={upcoming} daysToResult={daysToResult} />
 
-            <NewsCard news={detail.news} index={9} />
+            <NewsCard news={detail.news} index={9} tone={row.newsTone} />
             <MacroItems sector={row.sector} items={detail.macro} index={9} />
             <ExternalCard symbol={row.symbol} read={detail.external} index={9} aiEnabled={detail.aiEnabled} />
           </div>

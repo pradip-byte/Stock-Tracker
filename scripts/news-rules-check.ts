@@ -2,7 +2,7 @@
  * Checks the headline rules against known examples.
  *   npx tsx scripts/news-rules-check.ts
  */
-import { blockedSource, cleanTitle, companyQuery, flowsFromHeadline, fullName, lowValueTitle, namesCompany, resultDateFromHeadline, shortName, tagMarketHeadline, tagStockHeadline } from "../src/lib/news/rules";
+import { brokerCall, toneLabel, toneOfHeadline, blockedSource, cleanTitle, companyQuery, flowsFromHeadline, fullName, lowValueTitle, namesCompany, resultDateFromHeadline, shortName, tagMarketHeadline, tagStockHeadline } from "../src/lib/news/rules";
 
 let failed = 0;
 const eq = (label: string, got: unknown, want: unknown) => {
@@ -80,6 +80,46 @@ eq("clean title", cleanTitle("Infosys Q2 profit rises 6% - Business Standard", "
 eq("low value: session blurb", lowValueTitle("Ola Electric Mobility falls 2.23% in Wednesday's session"), true);
 eq("low value: gold prices", lowValueTitle("Gold, silver prices crash up to 6.6% on MCX amid strong US dollar"), true);
 eq("low value: real news kept", lowValueTitle("Ola Electric's cash cushion dwindles as market share slips"), false);
+
+// tag fixes
+eq("rating: Buy X; target of Rs", tagStockHeadline("Buy HDFC Bank; target of Rs 1,850: ICICI Securities"), ["rating change"]);
+eq("rating: Accumulate X", tagStockHeadline("Accumulate Cipla; target of Rs 1,720: Prabhudas Lilladher"), ["rating change"]);
+eq("order win: received an order", tagStockHeadline("BEL receives Rs 1,200 crore order from Navy"), ["order win"]);
+eq("order win: order book alone is not a win", tagStockHeadline("L&T order book at record Rs 6 lakh crore"), ["other"]);
+eq("order win: order inflow alone is not a win", tagStockHeadline("BHEL order inflow guidance unchanged"), ["guidance"]);
+eq("non-news: option chain", lowValueTitle("Infosys Option Chain - NSE India"), true);
+eq("non-news: share price page", lowValueTitle("Tata Steel Share Price Today, TATASTEEL Stock Price Live NSE/BSE"), true);
+eq("non-news: share price, quote page", lowValueTitle("HDFC Bank Share Price - HDFC Bank Stock Price"), true);
+eq("news: share price hits high is kept", lowValueTitle("MCX share price hits new high, up 100% in one year"), false);
+eq("news: share price target raised is kept", lowValueTitle("MCX share price target raised by UBS backing strong volume growth"), false);
+
+// broker calls
+eq("call: Buy, target, broker after colon", brokerCall("Buy HDFC Bank; target of Rs 1,850: ICICI Securities"), { broker: "ICICI Securities", call: "Buy", target: 1850 });
+eq("call: downgrade with target", brokerCall("CLSA downgrades Infosys, cuts target price to Rs 1,250"), { broker: "CLSA", call: "Downgrade", target: 1250 });
+eq("call: target raised, no figure", brokerCall("MCX share price target raised by UBS backing strong volume growth"), { broker: "UBS", call: "Target raised", target: null });
+eq("call: question headline gives no call", brokerCall("Buy, Sell Or Hold: MCX, LG Electronics India, HDFC Bank And ITC"), null);
+eq("call: not a rating headline", brokerCall("Infosys opens new campus in Hyderabad"), null);
+
+eq("call: round-up of many stocks gives no call", brokerCall("RIL, SAIL, IndusInd Bank among top upgrades, TMPV, Waaree among top downgrades"), null);
+eq("ITC is not input tax credit", namesCompany("Big GST relief: CBIC proposes amendments on ITC claims", "ITC", "ITC Limited"), false);
+eq("ITC the company", namesCompany("ITC Q2 net profit rises 4% on cigarette volumes", "ITC", "ITC Limited"), true);
+eq("Trent the engine is not Trent the retailer", namesCompany("Rolls-Royce secures Trent 1000 XE order from Royal Brunei", "TRENT", "Trent Limited"), false);
+eq("Trent the retailer", namesCompany("Trent shares fall 4% after Q2 Westside growth slows", "TRENT", "Trent Limited"), true);
+eq("Tata Motors PV is not Tata Motors", namesCompany("Tata Motors PV among 10 Nifty stocks facing downgrades", "TMCV", "Tata Motors Limited"), false);
+
+// tone
+eq("tone +: upgrade", toneOfHeadline("Jefferies upgrades Tata Steel to buy"), 1);
+eq("tone +: profit rises", toneOfHeadline("Infosys Q2 net profit rises 6% to Rs 7,828 crore"), 1);
+eq("tone +: order", toneOfHeadline("BEL receives Rs 1,200 crore order from Navy"), 1);
+eq("tone -: downgrade", toneOfHeadline("CLSA downgrades Infosys, cuts target price to Rs 1,250"), -1);
+eq("tone -: probe", toneOfHeadline("SEBI probe into IndusInd Bank widens"), -1);
+eq("tone -: resigns", toneOfHeadline("IndusInd Bank CEO resigns with immediate effect"), -1);
+eq("tone 0: both", toneOfHeadline("Profit rises but brokerage downgrades stock"), 0);
+eq("tone 0: neither", toneOfHeadline("Infosys opens new campus in Hyderabad"), 0);
+eq("label: quiet", toneLabel(1, 1, 20).label, "Quiet");
+eq("label: positive", toneLabel(6, 1, 20).label, "Positive");
+eq("label: negative", toneLabel(1, 5, 20).label, "Negative");
+eq("label: mixed", toneLabel(4, 3, 20).label, "Mixed");
 
 // result dates
 const pub = "2026-11-05T06:00:00Z";

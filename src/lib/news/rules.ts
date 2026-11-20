@@ -13,8 +13,10 @@ export type StockTag = (typeof STOCK_TAGS)[number];
 const STOCK_RULES: [StockTag, RegExp][] = [
   ["results", /\b(q[1-4]\b|q[1-4]\s?fy|quarter(ly)? (results?|earnings|profit|numbers)|results?\b|earnings|net profit|profit (rises?|falls?|jumps?|drops?|up|down|surges?|slumps?|declines?)|pat\b|revenue (rises?|falls?|up|down|grows?)|board meeting)/i],
   ["guidance", /\b(guidance|outlook|forecasts?|expects?\b.*\b(growth|revenue|margin)|targets? (revenue|growth|margin)|raises? (its )?(forecast|guidance|outlook)|cuts? (its )?(forecast|guidance|outlook)|commentary)/i],
-  ["order win", /\b(bags?|wins?|secures?|receives?|awarded|lands?)\b.*\b(orders?|contracts?|deal|project|mandate|tender)|order (win|inflow|book)|letter of (award|intent)\b|\bloa\b/i],
-  ["rating change", /\b(upgrades?|downgrades?|target price|price target|raises? target|cuts? target|initiates? coverage|maintains? (buy|sell|hold)|(buy|sell|hold|accumulate|reduce|overweight|underweight|outperform|underperform) (rating|call)|brokerages?|credit rating|rating (upgrade|downgrade|cut|raised))/i],
+  // only a won or received order or contract: "order book" and "order inflow" on their own do not count
+  ["order win", /\b(bags?|bagged|wins?|won|secures?|secured|receives?|received|gets?|got|awarded|lands?|landed|clinch(es|ed)?)\b[^.;:]{0,60}\b(orders?|contracts?|mandate|tender|work order|letter of (award|intent))\b|\b(orders?|contracts?) (wins?|won|worth|from|for)\b.*\b(bags?|wins?|secures?|receives?|gets?)\b|\border wins?\b|\bletter of award\b|\bLoA\b/i],
+  // includes broker-call headlines: "Buy HDFC Bank; target of Rs 1,850: ICICI Securities"
+  ["rating change", /\b(upgrades?|downgrades?|target price|price target|raises? target|cuts? target|initiates? coverage|maintains? (buy|sell|hold)|(buy|sell|hold|accumulate|reduce|overweight|underweight|outperform|underperform) (rating|call)|brokerages?|credit rating|rating (upgrade|downgrade|cut|raised))|\btarget (price )?of (rs\.?|₹|inr)|^(buy|hold|sell|accumulate|reduce|add|neutral) [A-Z0-9]/i],
   ["regulatory", /\b(sebi|rbi|cci|nclt|nclat|irdai|trai|fssai|usfda|us fda|fda|cbi|\bed\b|enforcement directorate|income[- ]tax|gst (notice|demand)|tax (notice|demand)|show[- ]cause|penalt(y|ies)|fine[sd]?\b|probe|investigation|raid|ban(s|ned)?\b|court|tribunal|lawsuit|warning letter|form 483|regulator|compliance)/i],
   ["management change", /\b(ceo|cfo|coo|cto|md\b|managing director|chairman|chairperson|chief executive|chief financial)\b.*\b(appoint|resign|quit|step|steps|named|names|joins?|exit|retire|elevat|replac|successor)|\b(appoints?|resigns?|quits?|steps? down|named as|to succeed|re-?appoint)\b/i],
   ["block deal", /\b(block deal|bulk deal|stake sale|sells? .*stake|offloads?|pares? stake|buys? .*stake|acquires? .*stake|promoters? (sell|buy|pledge)|ofs\b|offer for sale|qip\b|open offer|pledg)/i],
@@ -121,9 +123,11 @@ export function blockedSource(source: string | null, sourceUrl: string | null): 
 export function lowValueTitle(title: string): boolean {
   return (
     /\b(falls?|rises?|gains?|declines?|drops?|jumps?|slips?|advances?) [\d.]+% in \w+day'?s? (session|trade)/i.test(title) ||
-    /\b(share|stock) price (today )?(live|updates?)\b|live updates?:|\bprice today\b.*\bcheck\b|investor analysis|stocks? today, \w+ \d+:/i.test(title) ||
+    /live updates?:|\bprice today\b.*\bcheck\b|investor analysis|stocks? today, \w+ \d+:/i.test(title) ||
     /\b(gold|silver)\b.*\b(price|rate)s?\b/i.test(title) ||
-    /stock price, news, quote|share price today|market news$|returns chart|\(0P[0-9A-Z]+\.[A-Z]+\)/i.test(title)
+    // quote, chart and data pages rather than news. "share price hits a new high" is news; "Share Price Today" is a page.
+    /\boption chain\b|\b(share|stock) price(s)? (today|live|updates?|history|chart|quote|target 20\d\d|nse|bse|on nse|on bse)\b|\b(share|stock) price\s*([,|&–-]|$)|stock price, news, quote|market news$/i.test(title) ||
+    /returns chart|\(0P[0-9A-Z]+\.[A-Z]+\)|shareholding pattern|company profile|financial statements|futures? (&|and) options quote|\bF&O quote\b|historical (prices|data)|\bstock (quote|forecast|analysis) (\||-|&)|price target (&|and) analyst/i.test(title)
   );
 }
 
@@ -199,4 +203,92 @@ export function flowsFromHeadline(title: string): { fii: number | null; dii: num
   const fii = flowOf(title, /\b(fiis?|fpis?|foreign (institutional |portfolio )?investors?)\b/i);
   const dii = flowOf(title, /\b(diis?|domestic institutional investors?|domestic (institutions|funds))\b/i);
   return fii == null && dii == null ? null : { fii, dii };
+}
+
+// ───────────────────────── broker calls ─────────────────────────
+
+const BROKERS = [
+  "CLSA", "UBS", "Jefferies", "Morgan Stanley", "Goldman Sachs", "JP Morgan", "JPMorgan", "Citi", "Nomura", "Macquarie", "HSBC", "Bernstein", "BofA", "Bank of America",
+  "Barclays", "Deutsche Bank", "Daiwa", "BNP Paribas", "Investec", "Mirae", "Kotak Institutional Equities", "Kotak Securities", "Kotak Neo", "Motilal Oswal", "ICICI Securities",
+  "ICICI Direct", "HDFC Securities", "Axis Securities", "Axis Capital", "SBI Securities", "Emkay", "Nuvama", "Prabhudas Lilladher", "Anand Rathi", "Sharekhan", "Geojit",
+  "Choice Broking", "Choice Equity", "JM Financial", "Antique", "Elara", "Nirmal Bang", "IIFL", "Systematix", "Centrum", "YES Securities", "Ambit", "Avendus", "InCred",
+  "Equirus", "DAM Capital", "LKP", "KR Choksey", "PhillipCapital", "Phillip Capital", "Dolat", "Ventura", "Religare", "Arihant", "Asit C Mehta", "BOB Capital", "Mirae Asset",
+];
+const CALLS: [string, RegExp][] = [
+  ["Upgrade", /\bupgrad(es?|ed)\b/i],
+  ["Downgrade", /\bdowngrad(es?|ed)\b/i],
+  ["Buy", /^buy\b|\b(buy|bullish) (rating|call|on)\b|\b(maintains?|retains?|reiterates?|keeps?|initiates?( coverage)? with|rates?|recommends?) (a |an )?['‘"]?buy\b|\bbuy['’"]? (rating|call|tag)/i],
+  ["Accumulate", /^accumulate\b|\baccumulate['’"]? (rating|call)|\b(maintains?|retains?) ['‘"]?accumulate/i],
+  ["Add", /^add\b|\b(maintains?|retains?|rates?) ['‘"]?add\b|\badd['’"]? (rating|call)/i],
+  ["Hold", /^hold\b|\bhold['’"]? (rating|call)|\b(maintains?|retains?|keeps?) ['‘"]?hold\b/i],
+  ["Neutral", /^neutral\b|\bneutral['’"]? (rating|call|stance)|\b(maintains?|retains?) ['‘"]?neutral/i],
+  ["Reduce", /^reduce\b|\breduce['’"]? (rating|call)|\b(maintains?|retains?) ['‘"]?reduce/i],
+  ["Sell", /^sell\b|\bsell['’"]? (rating|call)|\b(maintains?|retains?|initiates?( coverage)? with) (a )?['‘"]?sell\b/i],
+  ["Overweight", /\boverweight\b/i],
+  ["Underweight", /\bunderweight\b/i],
+  ["Outperform", /\boutperform\b/i],
+  ["Underperform", /\bunderperform\b/i],
+  ["Target raised", /\b(raises?|raised|hikes?|hiked|lifts?|ups) (its |the )?(price )?target|target (price )?(raised|hiked|lifted)/i],
+  ["Target cut", /\b(cuts?|lowers?|lowered|slashes?|trims?|reduces?) (its |the )?(price )?target|target (price )?(cut|lowered|slashed|trimmed)/i],
+];
+
+export type BrokerCall = { broker: string | null; call: string | null; target: number | null };
+
+/**
+ * The broker, the call and the target price that a rating headline states.
+ * Any part the headline does not state is left empty. A headline that only asks
+ * the question ("Buy, sell or hold?") gives no call.
+ */
+export function brokerCall(title: string): BrokerCall | null {
+  // round-ups that list many companies cannot be pinned on one of them
+  if (/\bamong\b|\btop (upgrades?|downgrades?|picks?|buys?)\b|\b\d+ (nifty |sensex )?(stocks|shares)\b|stocks to (buy|watch|sell)/i.test(title)) return null;
+  const asks = /\bbuy,? (sell,? )?or (sell|hold)\b|should you (buy|sell)|\bbuy or sell\b/i.test(title);
+  const call = asks ? null : (CALLS.find(([, re]) => re.test(title))?.[0] ?? null);
+  const t = title.match(/target(?: price)?(?: of| to| at|:| raised to| cut to| hiked to| lowered to)?\s*(?:rs\.?|₹|inr)\s?([\d,]+(?:\.\d+)?)/i) ?? title.match(/(?:rs\.?|₹|inr)\s?([\d,]+(?:\.\d+)?)\s*(?:price )?target/i);
+  const target = t ? Number(t[1].replace(/,/g, "")) : null;
+  let broker = BROKERS.find((b) => new RegExp(`(^|[^A-Za-z])${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^A-Za-z])`, "i").test(title)) ?? null;
+  if (!broker) {
+    // "Buy X; target of Rs 1,850: Some Securities"
+    const tail = title.match(/:\s*([A-Z][A-Za-z&.' ]{2,40})$/)?.[1]?.trim();
+    if (tail && tail.split(" ").length <= 4 && /(securities|capital|broking|research|financial|equities|institutional|direct)$/i.test(tail)) broker = tail;
+  }
+  if (!broker && call == null && target == null) return null;
+  if (call == null && target == null) return null; // a broker's name alone is not a call
+  return { broker, call, target: target != null && Number.isFinite(target) && target > 0 ? target : null };
+}
+
+// ───────────────────────── news tone ─────────────────────────
+
+const POSITIVE =
+  /\b(upgrad(es?|ed)|raises? (its |the )?(price )?(target|guidance|forecast|outlook)|target (price )?(raised|hiked|lifted)|hikes? target|guidance raised|record (orders?|order book|high|profit|revenue|sales|quarter|volumes?)|beats? (estimates?|expectations?|street|forecasts?)|profit (rises?|jumps?|surges?|soars?|up|grows?|doubles|triples|zooms?|climbs?)|net (profit )?(rises?|jumps?|surges?|up|doubles)|revenue (rises?|jumps?|grows?|up|climbs?)|(bags?|bagged|wins?|won|secures?|secured|receives?|received) [^.;:]{0,50}\b(orders?|contracts?)|order wins?|outperform|overweight|rall(y|ies|ied)|surges?|soars?|hits? (a )?(record|new|fresh|52-week|all-time|lifetime) high|turns? profitable|returns? to profit|strong (growth|quarter|results|demand|show|numbers)|buyback|bonus (issue|shares)|(usfda|fda|regulatory) (nod|approval)|gets? (nod|approval|clearance)|top (pick|gainer)|bullish)\b/i;
+const NEGATIVE =
+  /\b(downgrad(es?|ed)|cuts? (its |the )?(price )?(target|guidance|forecast|outlook)|target (price )?(cut|lowered|slashed|trimmed)|slashes? target|guidance cut|miss(es|ed)? (estimates?|expectations?|street|forecasts?)|profit (falls?|drops?|slumps?|declines?|plunges?|down|halves|shrinks?|dips?|slips?|tumbles?)|net (profit )?(falls?|drops?|declines?|down|slumps?)|net loss|loss (widens|widened)|posts? (a )?loss|revenue (falls?|drops?|declines?|down|slips?)|probes?|penalt(y|ies)|fined|fines\b|halts?|halted|resigns?|resigned|quits?|steps? down|raids?|raided|fraud|defaults?|underperform|underweight|slumps?|plunges?|tumbles?|crash(es|ed)?|hits? (a )?(52-week|record|all-time|new|fresh) low|warning letter|show[- ]cause|ban(s|ned)\b|lawsuit|sued|layoffs?|recalls?|weak (demand|quarter|results|show|numbers)|top loser|bearish|scam|insolvency|bankrupt)\b/i;
+
+/**
+ * +1, 0 or -1 for one headline, from keywords and any broker call it states.
+ * A headline with both kinds of word, or neither, scores 0. This reads words,
+ * not meaning: "profit falls less than feared" scores -1.
+ */
+export function toneOfHeadline(title: string): -1 | 0 | 1 {
+  const call = brokerCall(title)?.call ?? null;
+  const up = POSITIVE.test(title) || (call != null && ["Buy", "Accumulate", "Add", "Upgrade", "Overweight", "Outperform", "Target raised"].includes(call));
+  const down = NEGATIVE.test(title) || (call != null && ["Sell", "Reduce", "Downgrade", "Underweight", "Underperform", "Target cut"].includes(call));
+  return up === down ? 0 : up ? 1 : -1;
+}
+
+export type ToneLabel = "Positive" | "Mixed" | "Negative" | "Quiet";
+export type NewsTone = { label: ToneLabel; positive: number; negative: number; total: number };
+
+/**
+ * 30-day tone for a stock from its headline counts.
+ *   Quiet     fewer than 3 headlines scored either way
+ *   Positive  at least twice as many positive as negative, and at least 2 more
+ *   Negative  the mirror image
+ *   Mixed     anything else
+ */
+export function toneLabel(positive: number, negative: number, total: number): NewsTone {
+  const scored = positive + negative;
+  const label: ToneLabel =
+    scored < 3 ? "Quiet" : positive >= 2 * negative && positive - negative >= 2 ? "Positive" : negative >= 2 * positive && negative - positive >= 2 ? "Negative" : "Mixed";
+  return { label, positive, negative, total };
 }

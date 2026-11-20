@@ -13,6 +13,7 @@
 import { unstable_cache } from "next/cache";
 import { adminDb } from "./supabase/admin";
 import { analyseQuarters } from "./events";
+import { toneLabel, type NewsTone } from "./news/rules";
 import { aiEnabled } from "./settings";
 import { MACRO_SERIES, type MacroEvent, type MacroPoint, type MacroView, type SectorMacroItem } from "./macro";
 import { todayIST } from "./market";
@@ -103,6 +104,7 @@ function mapRow(r: any): StockRow {
     rs6: n(r.rs6),
     marketUp: r.market_up ?? null,
     entry: r.entry && typeof r.entry === "object" && typeof r.entry.rating === "string" ? r.entry : null,
+    newsTone: toneLabel(0, 0, 0),
   };
 }
 
@@ -141,10 +143,18 @@ async function getBacktests(db: SupabaseClient, scope: "stock" | "sector" | "all
 
 const MARKET = { tags: ["eod", "quotes"], revalidate: 120 };
 
+/** 30-day headline counts per stock, as tone labels. */
+async function loadTones(db: SupabaseClient): Promise<Map<string, NewsTone>> {
+  const { data } = await db.from("news_tone").select("symbol,positive,negative,total").limit(3000);
+  return new Map((data ?? []).map((r) => [r.symbol as string, toneLabel(Number(r.positive), Number(r.negative), Number(r.total))]));
+}
+
 export async function loadRows(db: SupabaseClient): Promise<StockRow[]> {
+  const tones = loadTones(db);
   const { data, error } = await db.from("stock_latest").select("*").eq("kind", "equity").order("symbol").limit(2000);
   if (error) throw new Error(`stock_latest: ${error.message}`);
-  return (data ?? []).map(mapRow);
+  const tone = await tones;
+  return (data ?? []).map((r) => ({ ...mapRow(r), newsTone: tone.get(r.symbol) ?? toneLabel(0, 0, 0) }));
 }
 
 const cachedRows = unstable_cache(() => loadRows(adminDb()), ["rows-v1"], MARKET);
@@ -276,6 +286,8 @@ export async function loadStock(db: SupabaseClient, symbol: string): Promise<Sto
   const { data: r, error } = await db.from("stock_latest").select("*").eq("symbol", symbol).eq("kind", "equity").maybeSingle();
   if (error) throw new Error(`stock_latest: ${error.message}`);
   if (!r) return null;
+  const { data: tn } = await db.from("news_tone").select("positive,negative,total").eq("symbol", symbol).maybeSingle();
+  const newsTone = toneLabel(Number(tn?.positive ?? 0), Number(tn?.negative ?? 0), Number(tn?.total ?? 0));
   const [{ data: eq }, stock, sector, external, macro, { data: newsRows }] = await Promise.all([
     db
       .from("earnings")
@@ -302,7 +314,7 @@ export async function loadStock(db: SupabaseClient, symbol: string): Promise<Sto
     })),
     n(r.fiscal_year_end_month),
   ).slice(-8);
-  return { row: mapRow(r), quarters, today: todayIST(), backtests: { stock, sector }, external, macro, news: (newsRows ?? []).map(mapNews), aiEnabled: aiEnabled() };
+  return { row: { ...mapRow(r), newsTone }, quarters, today: todayIST(), backtests: { stock, sector }, external, macro, news: (newsRows ?? []).map(mapNews), aiEnabled: aiEnabled() };
 }
 
 const cachedStock = unstable_cache((symbol: string) => loadStock(adminDb(), symbol), ["stock-v1"], MARKET);
@@ -406,6 +418,7 @@ export type Scoreboard = {
   byEntry: PaperStats[];
   byRegime: PaperStats[];
   byExternal: PaperStats[];
+  byTone: PaperStats[];
   recent: MarkedTrade[];
   pending: number;
   limits: LimitStats;
@@ -448,6 +461,7 @@ export async function getScoreboards(): Promise<{ boards: Scoreboard[]; quotesAt
       byEntry: breakdown(marked, entryLabel),
       byRegime: breakdown(marked, regimeOf),
       byExternal: breakdown(marked, externalBand),
+      byTone: breakdown(marked, (t) => (t.context.newsTone ? `News tone: ${t.context.newsTone.label}` : "No tone recorded")),
       recent: marked.slice(0, 40),
       pending: mine.filter((t) => t.status === "pending").length,
       limits: limitStats(mine),

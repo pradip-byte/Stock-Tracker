@@ -25,6 +25,8 @@ export type PaperContext = {
   marketUp?: boolean | null;
   regime?: string | null; // Risk-on / Neutral / Risk-off, once the macro view exists
   price?: number | null; // last price seen when the trade was requested (not the fill)
+  /** 30-day keyword news tone when the trade was requested. Recorded to test later whether it predicts anything. */
+  newsTone?: { label: string; positive: number; negative: number; total: number } | null;
 };
 
 export type PaperTrade = {

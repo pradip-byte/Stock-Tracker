@@ -139,6 +139,19 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   - *Tags* (`src/lib/news/rules.ts`, keyword rules, checked by `npx tsx scripts/news-rules-check.ts`): results,
     guidance, order win, rating change, regulatory, management change, block deal, other. The stock page
     shows tagged headlines; the stocks list shows how many arrived since you last opened that stock.
+  - *Matching* (`src/lib/news/names.ts`): a headline counts for a company only when it contains the registered
+    name or a listed common short name (TCS, HUL, RIL, SBI). The ticker is never used alone. Names that begin
+    another company's name are excluded (SBI but not SBI Life), and for exchanges (MCX, BSE) the headline
+    must be about the company, not a price or listing on it. `npx tsx scripts/news-retag.ts [--dry-run]`
+    re-applies the current rules to stored headlines.
+  - *Tone:* every stock headline scores +1, 0 or -1 from keyword lists (upgrade, profit rises, order win
+    against downgrade, profit falls, probe, penalty, resigns) and any broker call it states. Over 30 days a
+    stock is Quiet (fewer than 3 scored headlines), Positive or Negative (one side at least double the other
+    and 2 ahead), otherwise Mixed. The label and its counts show on the stock page and stocks list. Tone is
+    not part of any verdict; it is stored on every paper and shadow trade at entry, and the scoreboard breaks
+    results down by it so its usefulness can be measured.
+  - *Broker calls:* from rating-change headlines the app reads the broker, the call and the target price
+    where the headline states them, and lists them on the stock page. Round-ups naming many stocks are skipped.
   - *Result dates:* when a headline states a future result or board-meeting date outright, it is stored as
     "From headline" with the link and used ahead of Yahoo's estimate (a confirmed announcement still wins).
   - *Market headlines:* tagged crude, Fed, RBI, FII, geopolitics, policy. A day with two or more headlines

@@ -172,6 +172,13 @@ function Board({ b, index }: { b: Scoreboard; index: number }) {
               than those with a low score or no read, the read is not adding anything.
             </p>
           </Card>
+          <Card index={index + 3} className="col-span-12 xl:col-span-6" title="By news tone at entry" bodyClassName="p-0">
+            <StatsTable rows={b.byTone} />
+            <p className="px-3.5 py-2.5 text-[11px] leading-snug text-steel">
+              News tone is a keyword count over the last 30 days of headlines (Positive, Mixed, Negative, Quiet). It is not part of any verdict;
+              this table is how we find out whether it predicts anything. Trades opened before tone existed show &quot;No tone recorded&quot;.
+            </p>
+          </Card>
           <Card index={index + 3} className="col-span-12" title="Latest trades" bodyClassName="p-0">
             <Trades rows={b.recent} />
           </Card>

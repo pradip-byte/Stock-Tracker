@@ -15,7 +15,7 @@ import { Segmented } from "../ui/Segmented";
 import { PaperCell } from "./PaperCell";
 
 const COLS =
-  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_92px_88px_92px_100px_52px_172px_172px] items-center gap-3 px-3.5";
+  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_92px_88px_92px_100px_52px_104px_172px_172px] items-center gap-3 px-3.5";
 const FILTERS = ["All", "Watchlist", "Signals", "New headlines", "Paper trades", "Results in 30D", "Added by me"] as const;
 type SortKey = "symbol" | "tech" | "chg" | "event";
 
@@ -99,6 +99,16 @@ function Row({ r, today, paper, news }: { r: StockRow; today: string; paper?: Pa
           <span className="num text-[11px] text-steel">—</span>
         )}
       </span>
+      <span
+        className="num justify-self-end text-right text-[10px] leading-tight"
+        title={`News tone, last 30 days: ${r.newsTone.positive} positive, ${r.newsTone.negative} negative of ${r.newsTone.total} headlines. Keyword count, not part of the verdict.`}
+      >
+        <span className={clsx("label text-[10px]", r.newsTone.label === "Quiet" ? "text-steel" : "text-ink")}>{r.newsTone.label}</span>
+        <br />
+        <span className="text-steel">
+          {r.newsTone.positive} up / {r.newsTone.negative} down
+        </span>
+      </span>
       <PaperCell symbol={r.symbol} horizon="ST" trade={paper?.ST} price={price} />
       <PaperCell symbol={r.symbol} horizon="LT" trade={paper?.LT} price={price} />
     </div>
@@ -168,7 +178,7 @@ export function StocksTable({ rows, today, paper, news }: { rows: StockRow[]; to
         right={<Freshness mode="eod" at={eodDate} />}
         bodyClassName="overflow-x-auto"
       >
-        <div className="min-w-[1835px]">
+        <div className="min-w-[1955px]">
           <div className={clsx(COLS, "label h-8 border-b border-line text-[10px] text-steel")}>
             <span />
             {head("Stock", "symbol", false)}
@@ -185,6 +195,7 @@ export function StocksTable({ rows, today, paper, news }: { rows: StockRow[]; to
             {head("Long term")}
             {head("Next result")}
             {head("News")}
+            {head("News tone")}
             {head("Paper ST")}
             {head("Paper LT")}
           </div>
