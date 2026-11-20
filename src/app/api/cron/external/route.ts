@@ -2,6 +2,7 @@ import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { cronAuthorised } from "@/lib/cron-auth";
 import { runExternalWeekly } from "@/lib/jobs/external";
+import { aiEnabled } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 // One AI call with two web searches can take a minute, so this route needs a long limit.
@@ -10,6 +11,7 @@ export const maxDuration = 300;
 
 async function handle(request: Request) {
   if (!cronAuthorised(request)) return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  if (!aiEnabled()) return NextResponse.json({ status: "skipped", reason: "Paid AI jobs are switched off (EXTERNAL_AI_ENABLED is not true)." });
   // stop starting new calls after 150 seconds so the last one can finish inside the limit
   const result = await runExternalWeekly({ budgetMs: 150000 });
   // cached page data is refreshed on the next visit

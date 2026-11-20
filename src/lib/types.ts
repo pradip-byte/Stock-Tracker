@@ -69,6 +69,8 @@ export type StockRow = {
   fundamentalsAt: string | null;
   fiscalYearEndMonth: number | null;
   nextResultUrl: string | null;
+  /** The headline a "From headline" result date was read from. */
+  nextResultHeadline: string | null;
   // Filled by later phases
   external: number | null;
   overall: number | null;
@@ -168,7 +170,13 @@ export type StockDetail = {
   external: ExternalRead | null;
   /** Recent macro events that name this stock's sector. */
   macro: SectorMacroItem[];
+  /** Headlines from free feeds, newest first. Headline, publisher, time and link only. */
+  news: NewsItem[];
+  /** False when the paid AI jobs are switched off. */
+  aiEnabled: boolean;
 };
+
+export type NewsItem = { id: number; title: string; source: string | null; url: string; publishedAt: string; tags: string[] };
 
 export type JobRun = {
   id: number;

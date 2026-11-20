@@ -97,9 +97,17 @@ export type MacroEvent = {
   hurt: SectorEffect[];
   nifty: { d1: number | null; d5: number | null; d20: number | null };
   sectorMoves: Record<string, SectorMove>;
+  /** "feed": a day on which at least two market headlines carried the same keyword tag. "ai": from an old AI macro note. */
+  origin: "ai" | "feed";
+  source: string | null;
+  /** Sectors usually sensitive to this kind of event. No direction is implied. */
+  exposed: SectorEffect[];
 };
 
-export type SectorMacroItem = { event: MacroEvent; effect: "helps" | "hurts"; why: string; move: SectorMove | null };
+export type MarketHeadline = { id: number; title: string; source: string | null; url: string; publishedAt: string; tags: string[] };
+export type DayFlows = { date: string; fii: number | null; dii: number | null; title: string; source: string | null; url: string };
+
+export type SectorMacroItem = { event: MacroEvent; effect: "helps" | "hurts" | "sensitive"; why: string; move: SectorMove | null };
 
 export type MacroPoint = { value: number; date: string; chg1: number | null; chg20: number | null };
 
@@ -114,4 +122,8 @@ export type MacroView = {
   series: { id: string; label: string; unit: string; point: MacroPoint | null }[];
   note: { runAt: string; summary: string; lowGrade: boolean; flows: { fii: string; dii: string; period: string; url: string | null } | null } | null;
   events: MacroEvent[];
+  /** Tagged market headlines from the publisher feeds, newest first. */
+  headlines: MarketHeadline[];
+  /** The latest daily FII/DII figures a headline stated, if any in the last four days. */
+  flows: DayFlows | null;
 };

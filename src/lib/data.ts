@@ -13,6 +13,7 @@
 import { unstable_cache } from "next/cache";
 import { adminDb } from "./supabase/admin";
 import { analyseQuarters } from "./events";
+import { aiEnabled } from "./settings";
 import { MACRO_SERIES, type MacroEvent, type MacroPoint, type MacroView, type SectorMacroItem } from "./macro";
 import { todayIST } from "./market";
 import { breakdown, entryLabel, externalBand, limitStats, mapTrade, niftyPnl, pnlAt, summarise, type LimitStats, type MarkedTrade, type PaperBook, type PaperStats, type PaperTrade } from "./paper";
@@ -27,6 +28,7 @@ import {
   type DatedRisk,
   type ExternalRead,
   type JobRun,
+  type NewsItem,
   type Quotes,
   type SignalKind,
   type SignalStats,
@@ -87,6 +89,7 @@ function mapRow(r: any): StockRow {
     fundamentalsAt: r.fundamentals_at,
     fiscalYearEndMonth: n(r.fiscal_year_end_month),
     nextResultUrl: r.next_result_url ?? null,
+    nextResultHeadline: r.next_result_headline ?? null,
     external: n(r.external),
     overall: n(r.overall),
     shortVerdict: r.short_verdict,
@@ -273,7 +276,7 @@ export async function loadStock(db: SupabaseClient, symbol: string): Promise<Sto
   const { data: r, error } = await db.from("stock_latest").select("*").eq("symbol", symbol).eq("kind", "equity").maybeSingle();
   if (error) throw new Error(`stock_latest: ${error.message}`);
   if (!r) return null;
-  const [{ data: eq }, stock, sector, external, macro] = await Promise.all([
+  const [{ data: eq }, stock, sector, external, macro, { data: newsRows }] = await Promise.all([
     db
       .from("earnings")
       .select("period_end,revenue,net_profit,eps,eps_estimate,reported_at,reaction_1d,reaction_5d")
@@ -284,6 +287,7 @@ export async function loadStock(db: SupabaseClient, symbol: string): Promise<Sto
     getBacktests(db, "sector", r.sector),
     getExternal(db, symbol),
     getSectorMacro(db, r.sector ?? null),
+    db.from("news_items").select("id,title,source,url,published_at,tags").eq("symbol", symbol).order("published_at", { ascending: false }).limit(60),
   ]);
   const quarters = analyseQuarters(
     (eq ?? []).map((q) => ({
@@ -298,7 +302,7 @@ export async function loadStock(db: SupabaseClient, symbol: string): Promise<Sto
     })),
     n(r.fiscal_year_end_month),
   ).slice(-8);
-  return { row: mapRow(r), quarters, today: todayIST(), backtests: { stock, sector }, external, macro };
+  return { row: mapRow(r), quarters, today: todayIST(), backtests: { stock, sector }, external, macro, news: (newsRows ?? []).map(mapNews), aiEnabled: aiEnabled() };
 }
 
 const cachedStock = unstable_cache((symbol: string) => loadStock(adminDb(), symbol), ["stock-v1"], MARKET);
@@ -455,6 +459,9 @@ export async function getScoreboards(): Promise<{ boards: Scoreboard[]; quotesAt
 // ───────────────────────── macro view ─────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mapNews = (r: any): NewsItem => ({ id: Number(r.id), title: r.title, source: r.source, url: r.url, publishedAt: r.published_at, tags: Array.isArray(r.tags) ? r.tags : [] });
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapEvent(e: any): MacroEvent {
   return {
     id: Number(e.id),
@@ -468,6 +475,9 @@ function mapEvent(e: any): MacroEvent {
     hurt: Array.isArray(e.hurt) ? e.hurt : [],
     nifty: { d1: n(e.nifty_1d), d5: n(e.nifty_5d), d20: n(e.nifty_20d) },
     sectorMoves: e.sector_moves ?? {},
+    origin: e.origin === "feed" ? "feed" : "ai",
+    source: e.source ?? null,
+    exposed: Array.isArray(e.exposed) ? e.exposed : [],
   };
 }
 
@@ -477,11 +487,12 @@ export async function loadMacro(db: SupabaseClient): Promise<MacroView> {
   const rowsOf = (data: any[] | null) => (data ?? []).map((r) => ({ date: r.date as string, close: Number(r.close) }));
   const fromCandles = async (symbol: string) => rowsOf((await db.from("candles_daily").select("date,close").eq("symbol", symbol).order("date", { ascending: false }).limit(21)).data);
   const fromSeries = async (id: string) => rowsOf((await db.from("macro_series").select("date,close").eq("series", id).order("date", { ascending: false }).limit(21)).data);
-  const [{ data: d }, { data: note }, { data: recentEvents }, nifty, vix, ...outside] = await Promise.all([
+  const [{ data: d }, { data: note }, { data: recentEvents }, { data: heads }, { data: flow }, nifty, vix, ...outside] = await Promise.all([
     db.from("macro_daily").select("*").order("date", { ascending: false }).limit(1).maybeSingle(),
     db.from("macro_notes").select("id,run_at,summary,flows,low_grade_sources").order("run_at", { ascending: false }).limit(1).maybeSingle(),
-    // the latest note's events are among the newest rows; fetched alongside rather than after the note
-    db.from("macro_events").select("*").order("id", { ascending: false }).limit(12),
+    db.from("macro_events").select("*").order("event_date", { ascending: false }).order("id", { ascending: false }).limit(10),
+    db.from("news_items").select("id,title,source,url,published_at,tags").eq("symbol", "_MARKET").order("published_at", { ascending: false }).limit(14),
+    db.from("macro_flows").select("*").gte("date", new Date(Date.now() - 4 * 86400000).toISOString().slice(0, 10)).order("date", { ascending: false }).limit(1).maybeSingle(),
     fromCandles(INDEX_SYMBOLS[0]),
     fromCandles(INDEX_SYMBOLS[1]),
     ...MACRO_SERIES.map((x) => fromSeries(x.id)),
@@ -492,7 +503,7 @@ export async function loadMacro(db: SupabaseClient): Promise<MacroView> {
     const ch = (k: number) => (rows[k] ? Math.round((last.close / rows[k].close - 1) * 10000) / 100 : null);
     return { value: last.close, date: last.date, chg1: ch(1), chg20: ch(20) };
   };
-  const events = note ? (recentEvents ?? []).filter((x) => x.note_id === note.id).sort((a, b) => a.id - b.id).map(mapEvent) : [];
+  const events = (recentEvents ?? []).map(mapEvent);
   return {
     date: d?.date ?? null,
     regime: d?.regime ?? null,
@@ -508,6 +519,8 @@ export async function loadMacro(db: SupabaseClient): Promise<MacroView> {
     ],
     note: note ? { runAt: note.run_at, summary: note.summary ?? "", lowGrade: !!note.low_grade_sources, flows: note.flows ?? null } : null,
     events,
+    headlines: (heads ?? []).map(mapNews),
+    flows: flow ? { date: flow.date, fii: n(flow.fii_net), dii: n(flow.dii_net), title: flow.title, source: flow.source, url: flow.url } : null,
   };
 }
 
@@ -520,8 +533,16 @@ export async function getSectorMacro(db: SupabaseClient, sector: string | null):
   for (const e of (data ?? []).map(mapEvent)) {
     const helped = e.helped.find((x) => x.sector === sector);
     const hurt = e.hurt.find((x) => x.sector === sector);
-    if (!helped && !hurt) continue;
-    out.push({ event: e, effect: helped ? "helps" : "hurts", why: (helped ?? hurt)!.why, move: e.sectorMoves[sector] ?? null });
+    const exposed = e.exposed.find((x) => x.sector === sector);
+    if (!helped && !hurt && !exposed) continue;
+    out.push({ event: e, effect: helped ? "helps" : hurt ? "hurts" : "sensitive", why: (helped ?? hurt ?? exposed)!.why, move: e.sectorMoves[sector] ?? null });
   }
   return out.slice(0, 6);
+}
+
+/** Headlines per stock that arrived since its page was last opened. Read live: it changes when the user visits a page. */
+export async function getNewsCounts(): Promise<Record<string, number>> {
+  const db = await userDb();
+  const { data } = await db.from("news_new_counts").select("symbol,new_count").limit(3000);
+  return Object.fromEntries((data ?? []).map((r) => [r.symbol as string, Number(r.new_count)]));
 }

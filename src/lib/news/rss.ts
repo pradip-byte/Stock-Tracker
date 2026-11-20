@@ -3,7 +3,7 @@
  * feed; article text and descriptions are never read or stored.
  */
 
-export type FeedItem = { title: string; url: string; published: string | null; source: string | null };
+export type FeedItem = { title: string; url: string; published: string | null; source: string | null; sourceUrl: string | null };
 export type FeedResult = { ok: boolean; status: number; ms: number; items: FeedItem[]; error?: string };
 
 const decode = (s: string) =>
@@ -32,7 +32,8 @@ export function parseRss(xml: string): FeedItem[] {
     const date = tag(block, "pubDate") ?? tag(block, "dc:date");
     const t = date ? new Date(decode(date)) : null;
     const source = tag(block, "source");
-    out.push({ title, url, published: t && !Number.isNaN(t.getTime()) ? t.toISOString() : null, source: source ? decode(source) : null });
+    const sourceUrl = block.match(/<source[^>]*\burl="([^"]+)"/i)?.[1] ?? null;
+    out.push({ title, url, published: t && !Number.isNaN(t.getTime()) ? t.toISOString() : null, source: source ? decode(source) : null, sourceUrl });
   }
   return out;
 }
@@ -56,7 +57,7 @@ export async function fetchFeed(url: string, timeoutMs = 10000): Promise<FeedRes
 /** Google News search feed, India English edition. */
 export const googleNewsUrl = (query: string) => `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-IN&gl=IN&ceid=IN:en`;
 
-/** Publisher feeds that cover Indian markets and companies. */
+/** Publisher feeds that cover Indian markets and companies. Moneycontrol's RSS is left out: it stopped updating in 2024. */
 export const PUBLISHER_FEEDS = [
   { id: "et-markets", publisher: "Economic Times", url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms" },
   { id: "et-stocks", publisher: "Economic Times", url: "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms" },
@@ -64,16 +65,4 @@ export const PUBLISHER_FEEDS = [
   { id: "bs-companies", publisher: "Business Standard", url: "https://www.business-standard.com/rss/companies-101.rss" },
   { id: "mint-markets", publisher: "Mint", url: "https://www.livemint.com/rss/markets" },
   { id: "mint-companies", publisher: "Mint", url: "https://www.livemint.com/rss/companies" },
-  { id: "mc-business", publisher: "Moneycontrol", url: "https://www.moneycontrol.com/rss/business.xml" },
-  { id: "mc-markets", publisher: "Moneycontrol", url: "https://www.moneycontrol.com/rss/marketreports.xml" },
-  { id: "mc-latest", publisher: "Moneycontrol", url: "https://www.moneycontrol.com/rss/latestnews.xml" },
 ] as const;
-
-/** A company name as people write it in headlines: no "Limited", "Ltd", "Corporation of India" tails. */
-export function headlineName(name: string): string {
-  return name
-    .replace(/\b(limited|ltd\.?|corporation|corp\.?|company|co\.?|\(india\)|india)\b/gi, " ")
-    .replace(/[.,&]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}

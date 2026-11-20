@@ -47,6 +47,7 @@ npm run dev                    # http://localhost:3000
 | `EXTERNAL_SIGNALS_MODEL` | AI read (Phase 4) | Claude model for the AI read. Optional; defaults to `claude-haiku-5-5` |
 | `TRADE_COST_PCT` | Optional. Round-trip trading cost in percent used by the signal research and paper trades. Default 0.25. |
 | `SHADOW_TRADE_INR` | Optional. Notional rupee size of each automatic shadow paper trade. Default 100000. |
+| `EXTERNAL_AI_ENABLED` | Optional. `true` switches the paid AI jobs back on. Default off. With it off, `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID` and `EXTERNAL_SIGNALS_MODEL` are not needed. |
 | `ANTHROPIC_WORKSPACE_ID` | AI read (Phase 4) | Only needed when the API key is not tied to a single workspace; Anthropic then requires the workspace ID on every request |
 | `ANTHROPIC_API_KEY` | AI read (Phase 4) | From console.anthropic.com. Without it the AI read is simply unavailable; everything else works |
 
@@ -65,6 +66,7 @@ npm run dev                    # http://localhost:3000
 | `npm run research` | Tests every candidate signal against the random-day baseline, in-sample (to 2022) and out-of-sample (2023 on), after costs. Prints tables; changes nothing. |
 | `npm run recompute` | Recomputes indicators, momentum ranks and verdicts for every stock from stored prices (two passes). |
 | `npm run macro` | Daily macro numbers, breadth, regime label and event follow-up. `-- --backfill` rebuilds the regime history; `-- --note` writes the weekly AI macro note (spends money). |
+| `npm run news` | News from free feeds: market headlines, then every stock not fetched in the last 20 hours. `-- --force` for all, `-- --symbol INFY,TCS` for some. |
 | `npm run external` | Weekly AI read for everything that is due. `-- --dry-run` lists who would run and why (no API calls). `-- --symbol TCS` runs one stock |
 | `npm run typecheck` | Type-checks from scratch (no incremental cache, which can hide errors) |
 
@@ -122,6 +124,32 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   (the same measure for any day in the same history) so a signal can be judged against doing nothing special.
   Returns are close-to-close with no costs, taxes or slippage. Results are stored per stock, per sector and
   for all stocks; a stock with fewer than 8 past cases falls back to its sector, then to all stocks.
+- **News from free feeds** (`src/lib/news/`, `src/lib/jobs/news.ts`). No AI and no paid API.
+  - *Sources:* one Google News search per stock per day (India English edition, last 7 days, by short company
+    name and, where headlines use it, the symbol), plus the Economic Times, Business Standard and Mint RSS
+    feeds for market headlines and any company they name. Yahoo's ticker news returns nothing for NSE symbols
+    and Moneycontrol's RSS stopped updating in 2024, so neither is used.
+  - *What is stored:* headline, publisher, time and link only (`news_items`), de-duplicated per stock, kept
+    60 days. Article text is never fetched. Google News links open the publisher's page through Google.
+  - *Filters:* the headline must name the company; known aggregator and auto-generated sites are dropped
+    (`NEWS_BLOCKED`), as are machine-written price blurbs.
+  - *Pacing:* one request every two seconds, a dozen stocks per call, with the schedule calling every five
+    minutes for three hours each morning. About 200 requests in two minutes drew HTTP 429 from Google in
+    testing; on a 429 the run stops and the rest wait for the next call.
+  - *Tags* (`src/lib/news/rules.ts`, keyword rules, checked by `npx tsx scripts/news-rules-check.ts`): results,
+    guidance, order win, rating change, regulatory, management change, block deal, other. The stock page
+    shows tagged headlines; the stocks list shows how many arrived since you last opened that stock.
+  - *Result dates:* when a headline states a future result or board-meeting date outright, it is stored as
+    "From headline" with the link and used ahead of Yahoo's estimate (a confirmed announcement still wins).
+  - *Market headlines:* tagged crude, Fed, RBI, FII, geopolitics, policy. A day with two or more headlines
+    under one tag is added to the event log, which records what Nifty 50 and the usually-sensitive sectors
+    did over the next 1, 5 and 20 sessions. Daily FII/DII figures are captured only when a headline states
+    them with a clear buy or sell verb; otherwise the dashboard says "not available".
+- **Paid AI jobs are off by default.** `EXTERNAL_AI_ENABLED=true` turns the per-stock AI read and the weekly AI
+  macro note back on (they also need `ANTHROPIC_API_KEY`); their cron entries are commented out in
+  `supabase/cron.sql.example`. While off, nothing calls the Anthropic API, the external score is left out of
+  the long-term verdict and the overall score (technical 60%, event 40%), and earlier AI reads stay visible
+  on the stock page marked with their date.
 - **Speed.**
   - Functions run in Tokyo (`vercel.json`, region `hnd1`), next to the Supabase database in ap-northeast-1.
   - Page data is cached with `unstable_cache` (`src/lib/data.ts`): quotes for 60 seconds, the dashboard, the

@@ -139,7 +139,7 @@ export async function runMacroDaily(opts: { years?: number } = {}): Promise<JobR
  */
 export async function updateEventMoves(db: SupabaseClient): Promise<number> {
   const since = new Date(Date.now() - 75 * 86400000).toISOString().slice(0, 10);
-  const { data: events } = await db.from("macro_events").select("id,event_date,helped,hurt,nifty_20d").gte("event_date", since).is("nifty_20d", null).limit(200);
+  const { data: events } = await db.from("macro_events").select("id,event_date,helped,hurt,exposed,nifty_20d").gte("event_date", since).is("nifty_20d", null).limit(200);
   if (!events?.length) return 0;
   const { data: stocks } = await db.from("stocks").select("symbol,sector").eq("kind", "equity").eq("backfill_status", "done");
   const bySector = new Map<string, string[]>();
@@ -168,7 +168,7 @@ export async function updateEventMoves(db: SupabaseClient): Promise<number> {
   let updated = 0;
   for (const e of events) {
     const nifty = await series(NIFTY);
-    const sectors = [...new Set([...(e.helped as SectorEffect[]), ...(e.hurt as SectorEffect[])].map((x) => x.sector))];
+    const sectors = [...new Set([...(e.helped as SectorEffect[]), ...(e.hurt as SectorEffect[]), ...((e.exposed ?? []) as SectorEffect[])].map((x) => x.sector))];
     const sectorMoves: Record<string, SectorMove> = {};
     for (const sec of sectors) {
       const symbols = bySector.get(sec) ?? [];
@@ -233,7 +233,7 @@ function noteSchema(sectors: string[]) {
 export async function runMacroNote(trigger: "weekly" | "manual" = "weekly"): Promise<JobResult & { costUsd?: number }> {
   const db = adminDb();
   const finish = await job(db, "macro-note");
-  if (!aiConfigured()) return await finish("error", 0, [], {}, "ANTHROPIC_API_KEY is not set");
+  if (!aiConfigured()) return await finish("error", 0, [], {}, "Paid AI jobs are switched off (EXTERNAL_AI_ENABLED is not true) or ANTHROPIC_API_KEY is not set");
   try {
     // one note a week: a second call within six days is skipped unless asked for by hand
     const { data: lastNote } = await db.from("macro_notes").select("run_at").order("run_at", { ascending: false }).limit(1).maybeSingle();

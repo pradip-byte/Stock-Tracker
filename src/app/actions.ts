@@ -6,6 +6,7 @@ import { addStock, refreshQuotes, runEod, type JobResult } from "@/lib/jobs/core
 import { researchStock } from "@/lib/jobs/external";
 import { requestClose, requestTrade } from "@/lib/jobs/paper";
 import type { PaperHorizon } from "@/lib/paper";
+import { aiEnabled } from "@/lib/settings";
 import { adminDb } from "@/lib/supabase/admin";
 import { allowedEmail, requireUser, userDb } from "@/lib/supabase/server";
 
@@ -67,6 +68,7 @@ export async function runJobAction(job: "quotes" | "eod"): Promise<JobResult> {
 /** Per-stock "Refresh" of the AI read. Ignores the weekly skip rule; reuses this week's sector note. */
 export async function refreshExternalAction(symbol: string): Promise<{ ok: boolean; error?: string; score?: number; costUsd?: number }> {
   await requireUser();
+  if (!aiEnabled()) return { ok: false, error: "AI reads are switched off. News now comes from free feeds." };
   const res = await researchStock(symbol, "manual");
   updateTag("eod");
   updateTag("quotes");

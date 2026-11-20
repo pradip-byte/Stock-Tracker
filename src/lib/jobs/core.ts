@@ -10,7 +10,9 @@ import { dayDiff } from "../format";
 import { isAfterClose, isMarketOpen, istParts, todayIST } from "../market";
 import { getProvider } from "../providers";
 import { entryPlan, heldBreakout } from "../entry";
+import { aiEnabled } from "../settings";
 import { runMacroDaily } from "./macro";
+import { fetchMarketNews } from "./news";
 import { openShadowTrades, processPaper } from "./paper";
 import { momentum12, percentileRank, returnOver } from "../factors";
 import { computeSeries, snapshotAt, technicalScore } from "../signals";
@@ -144,8 +146,9 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     .order("run_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  // an AI read older than 45 days no longer counts towards the verdict
-  const external = ext?.score != null && Date.now() - new Date(ext.run_at).getTime() < 45 * 86400000 ? Number(ext.score) : null;
+  // With the paid AI jobs switched off there is no external score: old reads stay on the page, dated, but are not scored.
+  // When they are on, a read older than 45 days no longer counts towards the verdict.
+  const external = aiEnabled() && ext?.score != null && Date.now() - new Date(ext.run_at).getTime() < 45 * 86400000 ? Number(ext.score) : null;
   const active: SignalKind | null = last.sig_bounce ? "Bounce" : last.sig_breakdown ? "Breakdown" : last.sig_trend ? "Trend" : null;
   const odds = active ? await signalOdds(db, symbol, ctx?.sector ?? null, active) : null;
   const num = (x: unknown) => (x == null ? null : Number(x));
@@ -166,6 +169,7 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     momRank,
     rs6,
     marketUp: market?.up ?? null,
+    externalOff: !aiEnabled(),
     event: num(ctx?.event),
     external,
     roe: num(ctx?.roe),
@@ -461,7 +465,9 @@ export async function runEod(opts: { force?: boolean; budgetMs?: number } = {}):
       // on a finished session: paper exits from the day's bars, then new shadow trades for tomorrow's open
       if (final) {
         try {
-          // the regime label first, so trades opened tonight record it
+          // evening pass over the market feeds (they hold only about a day of headlines), then the regime label,
+          // so trades opened tonight record it
+          await fetchMarketNews(db).catch(() => null);
           await runMacroDaily();
           const paper = await processPaper("eod", db);
           const shadow = await openShadowTrades(db);

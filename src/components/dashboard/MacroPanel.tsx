@@ -15,6 +15,7 @@ const host = (url: string) => {
   }
 };
 const tone = (v: number | null) => (v == null || v === 0 ? "text-steel" : v > 0 ? "text-gain" : "text-loss");
+const crore = (v: number) => `${v < 0 ? "−" : "+"}₹${Math.abs(Math.round(v)).toLocaleString("en-IN")} crore`;
 const signedPts = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : "0");
 
 /** Measured move after an event, or a plain "not yet" while the sessions have not happened. */
@@ -35,15 +36,20 @@ function Moves({ d1, d5, d20 }: { d1: number | null; d5: number | null; d20: num
 }
 
 function EventRow({ e }: { e: MacroEvent }) {
-  const effects = [...e.helped.map((x) => ({ ...x, kind: "helps" as const })), ...e.hurt.map((x) => ({ ...x, kind: "hurts" as const }))];
+  const effects = [
+    ...e.helped.map((x) => ({ ...x, kind: "helps" })),
+    ...e.hurt.map((x) => ({ ...x, kind: "hurts" })),
+    ...e.exposed.map((x) => ({ ...x, kind: "watch" })),
+  ];
   return (
     <li className="border-t border-line/70 py-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="label text-[10px] text-amber">{e.category}</span>
         <span className="num text-[10px] text-steel">{shortDate(e.eventDate)}</span>
         <a href={e.url} target="_blank" rel="noreferrer noopener" className="num text-[10px] text-steel underline decoration-line underline-offset-2 hover:text-amber">
-          {host(e.url)}, {shortDate(e.published)}
+          {e.source ?? host(e.url)}, {shortDate(e.published)}
         </a>
+        <span className="num text-[10px] text-steel">{e.origin === "feed" ? "from tagged headlines" : "from an earlier AI note"}</span>
       </div>
       <p className="mt-1 text-[13px] leading-snug text-ink">{e.title}</p>
       {e.summary && <p className="mt-0.5 text-[12px] leading-snug text-steel">{e.summary}</p>}
@@ -146,54 +152,71 @@ export function MacroPanel({ macro }: { macro: MacroView }) {
       <Card
         index={4}
         className="col-span-12 xl:col-span-7"
-        title="What is moving the market"
+        title="Market headlines"
         right={
-          <span className="flex items-center gap-3">
-            {macro.note?.lowGrade && <span className="label rounded-sm border border-amber/60 px-1.5 py-1 text-[10px] text-amber">Low-grade sources</span>}
-            <span className="num text-[10px] uppercase tracking-wider text-steel">{macro.note ? `AI note ${fmtIST(macro.note.runAt)}` : "No AI note yet"}</span>
+          <span className="num text-[10px] uppercase tracking-wider text-steel">
+            {macro.headlines[0] ? `Newest ${fmtIST(macro.headlines[0].publishedAt)}` : "No tagged headlines yet"}
           </span>
         }
       >
-        {!macro.note ? (
-          <p className="text-[12.5px] text-steel">The weekly macro note has not run yet.</p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {macro.note.summary && <p className="max-w-prose text-[13px] leading-relaxed text-ink">{macro.note.summary}</p>}
-            {macro.note.flows && (
-              <p className="num text-[11px] leading-relaxed text-steel">
-                {macro.note.flows.fii && (
-                  <>
-                    FII/FPI net: <span className="text-ink">{macro.note.flows.fii}</span>.{" "}
-                  </>
-                )}
-                {macro.note.flows.dii && (
-                  <>
-                    DII net: <span className="text-ink">{macro.note.flows.dii}</span>.{" "}
-                  </>
-                )}
-                {macro.note.flows.period && <>Period: {macro.note.flows.period}. </>}
-                {macro.note.flows.url && (
-                  <a href={macro.note.flows.url} target="_blank" rel="noreferrer noopener" className="underline decoration-line underline-offset-2 hover:text-amber">
-                    {host(macro.note.flows.url)}
-                  </a>
-                )}
-              </p>
+        <div className="flex flex-col gap-3">
+          <p className="num text-[11px] leading-relaxed text-steel">
+            FII/DII day figures:{" "}
+            {macro.flows ? (
+              <>
+                FII <span className={tone(macro.flows.fii)}>{macro.flows.fii == null ? "not available" : crore(macro.flows.fii)}</span>, DII{" "}
+                <span className={tone(macro.flows.dii)}>{macro.flows.dii == null ? "not available" : crore(macro.flows.dii)}</span>, headline of{" "}
+                {shortDate(macro.flows.date)} /{" "}
+                <a href={macro.flows.url} target="_blank" rel="noreferrer noopener" title={macro.flows.title} className="underline decoration-line underline-offset-2 hover:text-amber">
+                  {macro.flows.source ?? host(macro.flows.url)}
+                </a>
+              </>
+            ) : (
+              <span className="text-ink">not available. No headline in the last four days stated them.</span>
             )}
+          </p>
+          {macro.headlines.length ? (
+            <ul className="flex flex-col">
+              {macro.headlines.map((h) => (
+                <li key={h.id} className="border-t border-line/70 py-2">
+                  <a href={h.url} target="_blank" rel="noreferrer noopener" className="text-[12.5px] leading-snug text-ink hover:text-amber">
+                    {h.title}
+                  </a>
+                  <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                    {h.tags.map((t) => (
+                      <span key={t} className="label rounded-sm border border-amber/50 px-1 py-0.5 text-[9px] text-amber">
+                        {t}
+                      </span>
+                    ))}
+                    <span className="num text-[10px] text-steel">
+                      {h.source ?? "source not stated"} / {fmtIST(h.publishedAt)}
+                    </span>
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[12.5px] text-steel">No headline in the feeds carried a market tag yet. The feeds are read with the daily news run and at the end of each day.</p>
+          )}
+          <div>
+            <span className="label text-[10px] text-amber">Event log: what the market did afterwards</span>
             {macro.events.length ? (
-              <ul className="flex flex-col">
+              <ul className="mt-1 flex flex-col">
                 {macro.events.map((e) => (
                   <EventRow key={e.id} e={e} />
                 ))}
               </ul>
             ) : (
-              <p className="text-[12.5px] text-steel">The note found no event with a dated source.</p>
+              <p className="mt-1 text-[12.5px] text-steel">No events logged yet.</p>
             )}
-            <p className="text-[11px] leading-snug text-steel">
-              &quot;Helps&quot; and &quot;hurts&quot; are the AI&apos;s reasoning. The figures beside them are what Nifty 50 and our stocks in that sector actually
-              did afterwards, measured from the last close before the event. One event explains little on its own.
-            </p>
           </div>
-        )}
+          <p className="text-[11px] leading-snug text-steel">
+            Headlines come from the Economic Times, Business Standard and Mint feeds: headline, publisher, time and link only. Tags (crude, Fed,
+            RBI, FII, geopolitics, policy) are keyword matches, not AI. A day with two or more headlines under one tag is logged as an event,
+            and the figures beside it are what Nifty 50 and our stocks in the usually-sensitive sectors actually did afterwards. &quot;Watch&quot;
+            sectors are a fixed rule of thumb with no direction implied.
+          </p>
+        </div>
       </Card>
     </>
   );

@@ -277,7 +277,7 @@ export async function researchStock(
   symbol: string,
   trigger: "weekly" | "manual",
 ): Promise<{ ok: boolean; error?: string; score?: number; costUsd?: number }> {
-  if (!aiConfigured()) return { ok: false, error: "ANTHROPIC_API_KEY is not set, so the AI read cannot run." };
+  if (!aiConfigured()) return { ok: false, error: "AI reads are switched off (EXTERNAL_AI_ENABLED is not true) or ANTHROPIC_API_KEY is not set." };
   const db = adminDb();
   const { data: stock } = await db
     .from("stock_latest")
@@ -471,7 +471,7 @@ export async function runExternalWeekly(
     return { status, ok, failed: failures.length, detail, error };
   };
   try {
-    if (!aiConfigured()) return await finish("error", 0, [], {}, "ANTHROPIC_API_KEY is not set");
+    if (!aiConfigured()) return await finish("error", 0, [], {}, "Paid AI jobs are switched off (EXTERNAL_AI_ENABLED is not true) or ANTHROPIC_API_KEY is not set");
     const selection = await selectWeekly(db);
     const todo = selection.filter((s) => s.run).slice(0, opts.limit ?? Infinity);
     const skipped = selection.filter((s) => !s.run && s.reason.startsWith("skipped")).length;

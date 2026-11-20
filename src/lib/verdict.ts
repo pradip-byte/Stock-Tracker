@@ -18,6 +18,10 @@
  *  - Trend and breakout setups did worse when Nifty 50 was below its 200 DMA, in both
  *    periods: a positive technical score earns no credit then.
  *
+ * With the paid AI news read switched off (the default), the external score is
+ * left out of the long-term verdict and of the overall score, which becomes
+ * technical 60% and event 40% (the same 0.45 : 0.30 ratio as before).
+ *
  * These are mechanical readings of price history and reported numbers.
  * They are not predictions and not investment advice.
  */
@@ -51,6 +55,8 @@ export type VerdictInput = {
   rs6: number | null;
   /** Nifty 50 above its 200 DMA. Null when unknown. */
   marketUp: boolean | null;
+  /** The paid AI news read is switched off, so there is no external score to use. */
+  externalOff?: boolean;
   event: number | null;
   external: number | null;
   roe: number | null;
@@ -75,6 +81,8 @@ export type VerdictOutput = {
 };
 
 type Factor = { pts: number; text: string };
+const NO_EXTERNAL =
+  "No external score: the AI news read is switched off, so this verdict rests on momentum, trend, results and fundamentals. Headlines are shown for you to read, not scored.";
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const toVerdict = (score: number): Verdict => (score >= 65 ? "Favourable" : score >= 45 ? "Neutral" : "Avoid");
 const top = (f: Factor[], n = 5) =>
@@ -153,6 +161,7 @@ export function computeVerdict(v: VerdictInput): VerdictOutput {
   } else l.push({ pts: 0, text: "Less than a year of history, so there is no momentum ranking yet." });
   if (v.rs6 != null && v.rs6 >= 20) l.push({ pts: 3, text: `Beat Nifty 50 by ${v.rs6.toFixed(0)} points over six months.` });
   if (v.external != null) l.push({ pts: (v.external - 50) * 0.25, text: `External score is ${v.external} out of 100 (news, guidance and sector outlook).` });
+
   const longScore = Math.round(clamp(50 + l.reduce((a, b) => a + b.pts, 0), 0, 100));
 
   // ───────────── overall score: weighted mean of the scores that exist ─────────────
@@ -178,7 +187,8 @@ export function computeVerdict(v: VerdictInput): VerdictOutput {
     overall,
     risk: order[level],
     shortReasons: top(s),
-    longReasons: top(l),
+    // the note about the missing external score is always shown, after the scored reasons
+    longReasons: v.external == null && v.externalOff ? [...top(l, 4), NO_EXTERNAL] : top(l),
     odds: v.odds,
   };
 }

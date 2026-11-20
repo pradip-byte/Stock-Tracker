@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MacroPanel } from "../src/components/dashboard/MacroPanel";
 import { ScoreboardView } from "../src/components/scoreboard/ScoreboardView";
 import { MacroItems } from "../src/components/stock/MacroItems";
+import { NewsCard } from "../src/components/stock/NewsCard";
 import { EntryTag } from "../src/components/ui/core";
 import type { Scoreboard } from "../src/lib/data";
 import { regimeOf, type MacroEvent, type MacroView } from "../src/lib/macro";
@@ -25,6 +26,9 @@ const event: MacroEvent = {
   hurt: [{ sector: "Oil Gas & Consumable Fuels", why: "Lower realisations upstream." }],
   nifty: { d1: 0.38, d5: null, d20: null },
   sectorMoves: { Services: { d1: 1.28, d5: null, d20: null, stocks: 4 } },
+  origin: "feed",
+  source: "Business Standard",
+  exposed: [{ sector: "Chemicals", why: "Crude derivatives are a main input cost." }],
 };
 const read = regimeOf({ nifty: 25514, niftySma200: 23996, breadth200: 55, vix: 16.1, vixSma20: 16.1 })!;
 const macro: MacroView = {
@@ -42,6 +46,8 @@ const macro: MacroView = {
   ],
   note: { runAt: "2026-11-20T06:29:00Z", summary: "Crude and flows drive the week.", lowGrade: true, flows: { fii: "+94,963 crore", dii: "", period: "November to date", url: "https://www.business-standard.com/y" } },
   events: [event],
+  headlines: [{ id: 1, title: "Oil prices rise on Houthi attacks", source: "Business Standard", url: "https://www.business-standard.com/z", publishedAt: "2026-11-20T03:14:00Z", tags: ["crude", "geopolitics"] }],
+  flows: { date: "2026-11-18", fii: 5866, dii: null, title: "FIIs pump in Rs 5,866 crore", source: "The Financial Express", url: "https://www.financialexpress.com/q" },
 };
 
 const trade = (id: number, over: Partial<PaperTrade>): PaperTrade => ({
@@ -70,11 +76,13 @@ const board = (book: "mine" | "shadow", m: MarkedTrade[]): Scoreboard => ({
 });
 
 const checks: [string, string, string[]][] = [
-  ["MacroPanel", renderToStaticMarkup(<MacroPanel macro={macro} />), ["Neutral", "Nifty 50 vs 200 DMA", "Low-grade sources", "Brent crude slides", "not yet", "+94,963 crore", "5.05%", "no data"]],
-  ["MacroPanel (empty)", renderToStaticMarkup(<MacroPanel macro={{ ...macro, regime: null, inputs: [], note: null, events: [] }} />), ["No regime read yet", "has not run yet"]],
+  ["MacroPanel", renderToStaticMarkup(<MacroPanel macro={macro} />), ["Neutral", "Nifty 50 vs 200 DMA", "Market headlines", "Brent crude slides", "not yet", "+₹5,866 crore", "not available", "from tagged headlines", "Chemicals", "5.05%", "no data"]],
+  ["MacroPanel (empty)", renderToStaticMarkup(<MacroPanel macro={{ ...macro, regime: null, inputs: [], note: null, events: [], headlines: [], flows: null }} />), ["No regime read yet", "No headline in the last four days stated them", "No events logged yet"]],
   ["MacroItems", renderToStaticMarkup(<MacroItems sector="Services" index={0} items={[{ event, effect: "helps", why: "Lower fuel costs.", move: event.sectorMoves.Services }]} />), ["helps the sector", "Lower fuel costs.", "4 stocks"]],
   ["MacroItems (empty)", renderToStaticMarkup(<MacroItems sector="Realty" index={0} items={[]} />), ["No macro event in the last 45 days"]],
   ["Scoreboard", renderToStaticMarkup(<ScoreboardView boards={[board("mine", marked), board("shadow", [])]} quotesAt="2026-11-20T06:19:00Z" />), ["My paper trades", "Shadow portfolio", "Too few trades to judge", "50%", "closed: target", "Long-term verdict is now Avoid", "No trades have filled yet", "Risk-off", "Wait for pullback, limit order", "Pullback limit orders", "By external score at entry", "External above 60", "No read", "50%</span> (too few to judge)"]],
+  ["NewsCard", renderToStaticMarkup(<NewsCard index={0} news={[{ id: 1, title: "Infosys Q2 net profit rises 6%", source: "Mint", url: "https://news.google.com/a", publishedAt: "2026-10-23T11:00:00Z", tags: ["results"] }, { id: 2, title: "Infosys opens new campus", source: "Business Standard", url: "https://news.google.com/b", publishedAt: "2026-10-30T11:00:00Z", tags: ["other"] }]} />), ["results 1", "Infosys Q2 net profit rises 6%", "Other headlines (1)", "Infosys opens new campus", "not AI"]],
+  ["NewsCard (empty)", renderToStaticMarkup(<NewsCard index={0} news={[]} />), ["No headline naming this company"]],
   ["EntryTag", renderToStaticMarkup(<EntryTag rating="Wait for pullback" />) + renderToStaticMarkup(<EntryTag rating="Extended, don't chase" full />), ["Wait", "Extended, don&#x27;t chase"]],
 ];
 let failed = 0;

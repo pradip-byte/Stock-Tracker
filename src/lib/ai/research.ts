@@ -13,6 +13,7 @@
  *   is too small to justify the moving parts.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { aiEnabled } from "../settings";
 import { aiModel, emptyUsage, requestTokenCost, type AiUsage } from "./pricing";
 
 export type SearchSource = { url: string; title: string; pageAge: string | null };
@@ -80,7 +81,8 @@ function anthropic(): Anthropic {
   return client;
 }
 
-export const aiConfigured = () => Boolean(process.env.ANTHROPIC_API_KEY);
+/** True only when the paid AI jobs are switched on (EXTERNAL_AI_ENABLED=true) and a key is present. */
+export const aiConfigured = () => aiEnabled() && Boolean(process.env.ANTHROPIC_API_KEY);
 
 function addUsage(total: AiUsage, model: string, u: Anthropic.Beta.BetaUsage) {
   const cacheRead = u.cache_read_input_tokens ?? 0;

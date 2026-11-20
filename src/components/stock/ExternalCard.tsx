@@ -29,7 +29,7 @@ const signed = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n)}
 const ageDays = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 
 /** The AI read: company news, guidance and expectations, plus the shared sector note. */
-export function ExternalCard({ symbol, read, index }: { symbol: string; read: ExternalRead | null; index: number }) {
+export function ExternalCard({ symbol, read, index, aiEnabled }: { symbol: string; read: ExternalRead | null; index: number; aiEnabled: boolean }) {
   const [pending, start] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
 
@@ -45,12 +45,14 @@ export function ExternalCard({ symbol, read, index }: { symbol: string; read: Ex
     });
 
   const stale = read ? ageDays(read.runAt) > 21 : false;
+  // AI reads are switched off and this stock never had one: nothing to show
+  if (!aiEnabled && !read) return null;
 
   return (
     <Card
       index={index}
       className="col-span-12"
-      title="External read"
+      title={aiEnabled ? "External read" : "Earlier AI read (no longer updated)"}
       right={
         <span className="flex items-center gap-3">
           {read?.lowGradeSources && (
@@ -63,17 +65,27 @@ export function ExternalCard({ symbol, read, index }: { symbol: string; read: Ex
           )}
           {read ? (
             <span className={clsx("num text-[10px] uppercase tracking-wider", stale ? "text-amber" : "text-steel")}>
-              {stale ? "Stale / " : ""}AI read {fmtIST(read.runAt)}
+              {aiEnabled ? (stale ? "Stale / " : "") : "Written "}
+              {aiEnabled ? "AI read " : ""}
+              {fmtIST(read.runAt)}
             </span>
           ) : (
             <Freshness mode="text" label="No AI read yet" />
           )}
-          <Button variant="ghost" onClick={refresh} disabled={pending} className="disabled:opacity-60">
-            {pending ? "Researching" : "Refresh"}
-          </Button>
+          {aiEnabled && (
+            <Button variant="ghost" onClick={refresh} disabled={pending} className="disabled:opacity-60">
+              {pending ? "Researching" : "Refresh"}
+            </Button>
+          )}
         </span>
       }
     >
+      {!aiEnabled && read && (
+        <p className="num mb-3.5 border-b border-line pb-3 text-[11px] leading-relaxed text-amber">
+          AI reads are switched off. This one was written on {fmtIST(read.runAt)} and is kept for reference only: it is not updated and its score
+          is no longer part of the verdict. Current headlines are in the News card above.
+        </p>
+      )}
       {(pending || message) && (
         <p role="status" className={clsx("num mb-3.5 text-[11px]", message?.startsWith("Refresh failed") ? "text-amber" : "text-steel")}>
           {pending ? "Searching the web and reading results. This usually takes 30 to 90 seconds; keep this page open." : message}

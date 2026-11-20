@@ -16,6 +16,7 @@
     "research": "tsx scripts/research.ts",
     "recompute": "tsx scripts/recompute.ts",
     "macro": "tsx scripts/macro.ts",
+    "news": "tsx scripts/news.ts",
     "external": "tsx scripts/external.ts"
   },
   "dependencies": {

@@ -25,7 +25,9 @@ export function MacroItems({ sector, items, index }: { sector: string | null; it
           {items.map(({ event: e, effect, why, move }) => (
             <li key={e.id} className="border-t border-line/70 py-2.5">
               <div className="flex flex-wrap items-baseline gap-x-3">
-                <span className={clsx("label text-[10px]", effect === "helps" ? "text-amber" : "text-ink")}>{effect} the sector</span>
+                <span className={clsx("label text-[10px]", effect === "helps" ? "text-amber" : "text-ink")}>
+                  {effect === "sensitive" ? "sector usually sensitive" : `${effect} the sector`}
+                </span>
                 <span className="num text-[10px] text-steel">
                   {e.category} / {shortDate(e.eventDate)}
                 </span>
@@ -46,7 +48,8 @@ export function MacroItems({ sector, items, index }: { sector: string | null; it
         </ul>
       )}
       <p className="mt-3 text-[11px] leading-snug text-steel">
-        The link to the sector is the AI&apos;s reasoning; the figures are what our stocks in the sector did afterwards. Learning only, not advice.
+        Events come from keyword-tagged market headlines (and a few older AI notes). &quot;Usually sensitive&quot; is a fixed rule of thumb with no
+        direction implied; the figures are what our stocks in the sector actually did afterwards. Learning only, not advice.
       </p>
     </Card>
   );

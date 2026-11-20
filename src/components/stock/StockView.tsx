@@ -19,6 +19,7 @@ import { useQuote } from "../shell/quotes";
 import { vtName } from "../shell/StockLink";
 import { ExternalCard } from "./ExternalCard";
 import { MacroItems } from "./MacroItems";
+import { NewsCard } from "./NewsCard";
 import { Button, Card, EntryTag, Stat, VerdictStamp } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 
@@ -177,6 +178,17 @@ function Results({
                   ? `in ${daysToResult} days${row.nextResultEstimate ? " / estimate" : ""} / ${row.nextResultSource}`
                   : "no upcoming date published"}
               </span>
+              {upcoming && row.nextResultSource === "From headline" && row.nextResultUrl && (
+                <a
+                  href={row.nextResultUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  title={row.nextResultHeadline ?? undefined}
+                  className="num text-[10px] text-steel underline decoration-line underline-offset-2 hover:text-amber"
+                >
+                  date read from a headline; open it to check
+                </a>
+              )}
             </Stat>
             <Stat label="P/E (trailing)">{ratio(row.pe, "x")}</Stat>
             <Stat label="ROE">{ratio(row.roe, "%")}</Stat>
@@ -466,11 +478,11 @@ export function StockView({ detail }: { detail: StockDetail }) {
                           <span className="label text-[10px] text-steel/70">Event</span>
                         </div>
                       )}
-                      {detail.external?.score != null ? (
+                      {detail.aiEnabled && detail.external?.score != null ? (
                         <RadialGauge value={detail.external.score} label="External" size={92} delay={seq.charts + 0.14} />
                       ) : (
                         <div className="flex w-[92px] flex-col items-center justify-center gap-1 text-center">
-                          <span className="num text-[10px] text-steel">no AI read</span>
+                          <span className="num text-[10px] text-steel">{detail.aiEnabled ? "no AI read" : "not scored: AI read is off"}</span>
                           <span className="label text-[10px] text-steel/70">External</span>
                         </div>
                       )}
@@ -574,8 +586,9 @@ export function StockView({ detail }: { detail: StockDetail }) {
 
             <Results row={row} quarters={quarters} upcoming={upcoming} daysToResult={daysToResult} />
 
+            <NewsCard news={detail.news} index={9} />
             <MacroItems sector={row.sector} items={detail.macro} index={9} />
-            <ExternalCard symbol={row.symbol} read={detail.external} index={9} />
+            <ExternalCard symbol={row.symbol} read={detail.external} index={9} aiEnabled={detail.aiEnabled} />
           </div>
         </>
       )}
