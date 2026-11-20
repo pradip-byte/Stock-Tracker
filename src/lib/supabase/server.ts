@@ -1,8 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { probing } from "../perf";
+import { adminDb } from "./admin";
 
 /** Client bound to the signed-in user's cookies. RLS applies. */
 export async function userDb() {
+  // the timing probe has no session: it runs the same loaders with the service client
+  if (probing()) return adminDb();
   const store = await cookies();
   return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookies: {
