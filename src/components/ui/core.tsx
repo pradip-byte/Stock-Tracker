@@ -1,3 +1,4 @@
+import type { EntryRating } from "@/lib/entry";
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import { Rise, Stamp } from "../motion/primitives";
@@ -81,6 +82,28 @@ export function VerdictTag({ verdict }: { verdict: Verdict }) {
   return (
     <span className={clsx("label inline-block rounded-sm border px-1.5 py-1 text-[10px]", verdictStyle[verdict])}>
       {verdict}
+    </span>
+  );
+}
+
+const entryShort: Record<EntryRating, string> = {
+  "Good entry": "Good entry",
+  "Wait for pullback": "Wait",
+  "Extended, don't chase": "Extended",
+  "No setup": "No setup",
+};
+
+/** Entry rating tag. Amber only for a good entry; the others stay neutral. */
+export function EntryTag({ rating, full, title }: { rating: EntryRating; full?: boolean; title?: string }) {
+  return (
+    <span
+      title={title}
+      className={clsx(
+        "label inline-block whitespace-nowrap rounded-sm border px-1.5 py-1 text-[10px]",
+        rating === "Good entry" ? "border-amber/70 text-amber" : rating === "No setup" ? "border-line text-steel" : "border-steel/60 text-ink",
+      )}
+    >
+      {full ? rating : entryShort[rating]}
     </span>
   );
 }

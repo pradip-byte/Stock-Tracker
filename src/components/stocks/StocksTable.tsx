@@ -8,12 +8,12 @@ import type { StockRow } from "@/lib/types";
 import { TypeIn } from "../motion/primitives";
 import { useQuote } from "../shell/quotes";
 import { StockLink, SymbolMark } from "../shell/StockLink";
-import { Card, SignalTag, VerdictTag } from "../ui/core";
+import { Card, EntryTag, SignalTag, VerdictTag } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
 import { Segmented } from "../ui/Segmented";
 
 const COLS =
-  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_92px_92px_100px] items-center gap-3 px-3.5";
+  "grid grid-cols-[28px_minmax(190px,1.6fr)_minmax(130px,1fr)_96px_76px_48px_minmax(92px,.6fr)_48px_52px_56px_92px_88px_92px_100px] items-center gap-3 px-3.5";
 const FILTERS = ["All", "Watchlist", "Signals", "Results in 30D", "Added by me"] as const;
 type SortKey = "symbol" | "tech" | "chg" | "event";
 
@@ -62,6 +62,16 @@ function Row({ r, today }: { r: StockRow; today: string }) {
           </span>
         ) : r.shortVerdict ? (
           <VerdictTag verdict={r.shortVerdict} />
+        ) : (
+          <span className="num text-steel">—</span>
+        )}
+      </span>
+      <span className="justify-self-end">
+        {r.entry ? (
+          <EntryTag
+            rating={r.entry.rating}
+            title={`${r.entry.note} Entry ${r.entry.entryKind === "limit" ? "limit " : ""}${inr(r.entry.entry)}, stop ${inr(r.entry.stop)}, target ${inr(r.entry.target)}${r.entry.rewardRisk != null ? `, reward-to-risk ${r.entry.rewardRisk.toFixed(1)}x` : ""}.`}
+          />
         ) : (
           <span className="num text-steel">—</span>
         )}
@@ -135,7 +145,7 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
         right={<Freshness mode="eod" at={eodDate} />}
         bodyClassName="overflow-x-auto"
       >
-        <div className="min-w-[1300px]">
+        <div className="min-w-[1400px]">
           <div className={clsx(COLS, "label h-8 border-b border-line text-[10px] text-steel")}>
             <span />
             {head("Stock", "symbol", false)}
@@ -148,6 +158,7 @@ export function StocksTable({ rows, today }: { rows: StockRow[]; today: string }
             {head("Event", "event")}
             {head("R:R")}
             {head("Short term")}
+            {head("Entry")}
             {head("Long term")}
             {head("Next result")}
           </div>

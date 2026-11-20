@@ -31,7 +31,8 @@
  */
 import { momentum12, momentum6 } from "./factors";
 import { sma } from "./indicators";
-import { computeSeries, snapshotAt } from "./signals";
+import { entryPlan, heldBreakout, volumeBreakoutAt } from "./entry";
+import { computeSeries, snapshotAt, tradeFrame } from "./signals";
 import type { Candle } from "./types";
 
 export const R_HORIZONS = [5, 20, 60, 120] as const;
@@ -72,6 +73,11 @@ export const SIGNALS: SignalDef[] = [
   { id: "rs6_20", family: "Relative strength 6m", label: "6 month return 20+ points above Nifty 50", kind: "state" },
   { id: "drift", family: "Post-result drift", label: "Result day up and profit up year on year", kind: "trigger" },
   { id: "drift_neg", family: "Post-result drift", label: "Result day down and profit down year on year", kind: "trigger" },
+  { id: "entry_good", family: "Entry rating", label: "Good entry: buy at the next open", kind: "trigger" },
+  { id: "entry_wait_now", family: "Entry rating", label: "Wait for pullback: bought anyway at the next open", kind: "trigger" },
+  { id: "entry_wait_limit", family: "Entry rating", label: "Wait for pullback: limit at the suggested price, filled within 10 sessions", kind: "trigger" },
+  { id: "entry_ext_now", family: "Entry rating", label: "Extended: bought anyway at the next open", kind: "trigger" },
+  { id: "entry_ext_limit", family: "Entry rating", label: "Extended: limit at the suggested price, filled within 10 sessions", kind: "trigger" },
   { id: "bounce", family: "Existing", label: "Bounce signal (existing)", kind: "trigger" },
   { id: "trend", family: "Existing", label: "Trend signal (existing)", kind: "trigger" },
   { id: "breakdown", family: "Existing", label: "Breakdown warning (existing)", kind: "trigger" },
@@ -234,6 +240,8 @@ export type ResearchOptions = { costPct: number; onProgress?: (symbol: string) =
 
 export function runResearch(stocks: StockData[], nifty: Candle[], opts: ResearchOptions): { stats: Stat[]; meta: Record<string, unknown> } {
   const t = new Tallies();
+  const limitOrders: Record<string, number> = {};
+  const limitFills: Record<string, number> = {};
   const cost = opts.costPct;
 
   // market regime by date: Nifty close against its own 200 DMA, known at that day's close
@@ -251,12 +259,12 @@ export function runResearch(stocks: StockData[], nifty: Candle[], opts: Research
   };
 
   /** Record one trade: signal at index i of this stock, entry at the next open. */
-  const record = (signal: string, p: Prepared, i: number) => {
+  const record = (signal: string, p: Prepared, i: number, fillPrice?: number) => {
     const c = p.c;
     const date = c[i].time;
     const regime = regimeAt(date);
     if (!regime || i + 1 >= c.length) return;
-    const entry = c[i + 1].open;
+    const entry = fillPrice ?? c[i + 1].open;
     if (!(entry > 0)) return;
     const month = date.slice(0, 7);
     for (const h of R_HORIZONS) {
@@ -279,30 +287,55 @@ export function runResearch(stocks: StockData[], nifty: Candle[], opts: Research
     if (!p) continue;
     const c = p.c;
     const series = computeSeries(c);
-    let prev = { bounce: false, trend: false, breakdown: false, bo15: false, bo20: false };
+    let prev = { bounce: false, trend: false, breakdown: false, bo15: false, bo20: false, rating: "" };
+    /** A limit order left for up to 10 sessions: filled on the first day the low reaches it, at the limit or the open if lower. */
+    const limitFill = (signal: string, i: number, limit: number) => {
+      limitOrders[signal] = (limitOrders[signal] ?? 0) + 1;
+      for (let f = i + 1; f <= i + 10 && f < c.length; f++) {
+        if (c[f].low <= limit) {
+          limitFills[signal] = (limitFills[signal] ?? 0) + 1;
+          // counted as if the signal day were the day before the fill, so the holding period starts at the fill
+          record(signal, p, f - 1, Math.min(limit, c[f].open));
+          return;
+        }
+      }
+    };
     for (let i = WARMUP; i < c.length; i++) {
       record("baseline", p, i);
       const snap = snapshotAt(c, series, i);
-      // volume breakout: close above the highest close of the prior 50 sessions
-      let hi50 = 0;
-      for (let k = i - 50; k < i; k++) if (c[k].close > hi50) hi50 = c[k].close;
-      const range = c[i].high - c[i].low;
-      const topThird = range > 0 && (c[i].close - c[i].low) / range >= 2 / 3;
-      const vr = series.volRatio[i];
-      const breakout = c[i].close > hi50 && topThird && vr != null;
-      const cur = {
-        bounce: snap.sig_bounce,
-        trend: snap.sig_trend,
-        breakdown: snap.sig_breakdown,
-        bo15: breakout && (vr as number) >= 1.5,
-        bo20: breakout && (vr as number) >= 2,
-      };
+      const bo15 = volumeBreakoutAt(c, series.volRatio, i, 1.5) != null;
+      const bo20 = volumeBreakoutAt(c, series.volRatio, i, 2) != null;
+      // entry rating, with the uptrend standing in for a Favourable verdict (verdicts cannot be rebuilt historically)
+      const frame = tradeFrame(snap);
+      const plan = entryPlan({
+        close: c[i].close,
+        sma20: series.sma20[i],
+        sma20Ago: series.sma20[i - 5],
+        atr: series.atr[i],
+        rsi: series.rsi[i],
+        uptrend: snap.sig_trend,
+        favourable: snap.sig_trend,
+        freshBreakout: heldBreakout(c, series.volRatio, i, 3),
+        recentBreakout: heldBreakout(c, series.volRatio, i, 10),
+        target: frame.target,
+        stop: frame.stop,
+      });
+      const cur = { bounce: snap.sig_bounce, trend: snap.sig_trend, breakdown: snap.sig_breakdown, bo15, bo20, rating: plan.rating as string };
       if (i > WARMUP) {
         if (cur.bounce && !prev.bounce) record("bounce", p, i);
         if (cur.trend && !prev.trend) record("trend", p, i);
         if (cur.breakdown && !prev.breakdown) record("breakdown", p, i);
         if (cur.bo15 && !prev.bo15) record("volbo_15", p, i);
         if (cur.bo20 && !prev.bo20) record("volbo_20", p, i);
+        if (cur.rating !== prev.rating) {
+          if (plan.rating === "Good entry") record("entry_good", p, i);
+          // "extended" is only tested inside an uptrend, to compare like with like
+          if (plan.rating === "Wait for pullback" || (plan.rating === "Extended, don't chase" && snap.sig_trend)) {
+            const id = plan.rating === "Wait for pullback" ? "entry_wait" : "entry_ext";
+            record(`${id}_now`, p, i);
+            limitFill(`${id}_limit`, i, plan.entry);
+          }
+        }
       }
       prev = cur;
     }
@@ -377,6 +410,6 @@ export function runResearch(stocks: StockData[], nifty: Candle[], opts: Research
   const last = nifty[nifty.length - 1]?.time;
   return {
     stats: summarise(t),
-    meta: { stocks: prepared.length, firstSignalDate: first, lastDate: last, rebalances, costPct: cost, inSampleEnd: IN_SAMPLE_END },
+    meta: { limitOrders, limitFills, stocks: prepared.length, firstSignalDate: first, lastDate: last, rebalances, costPct: cost, inSampleEnd: IN_SAMPLE_END },
   };
 }

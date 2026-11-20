@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { ViewTransition, useState, useTransition } from "react";
 import { removeStockAction, setWatchlistAction } from "@/app/actions";
 import { changePct, dayDiff, inr, pct, shortDate, toneOf } from "@/lib/format";
+import type { EntryPlan } from "@/lib/entry";
 import { fmtIST } from "@/lib/market";
 import type { Quarter, SignalStats, StockDetail, StockRow } from "@/lib/types";
 import { CandleChart } from "../charts/CandleChart";
@@ -17,8 +18,41 @@ import { dur, ease, seq } from "../motion/tokens";
 import { useQuote } from "../shell/quotes";
 import { vtName } from "../shell/StockLink";
 import { ExternalCard } from "./ExternalCard";
-import { Button, Card, Stat, VerdictStamp } from "../ui/core";
+import { Button, Card, EntryTag, Stat, VerdictStamp } from "../ui/core";
 import { Freshness } from "../ui/Freshness";
+
+/** Entry rating with the suggested entry, stop, target and reward-to-risk. */
+function EntryBlock({ plan }: { plan: EntryPlan }) {
+  const cell = (label: string, value: string, accent = false) => (
+    <div>
+      <span className="block text-[9px] uppercase tracking-wider text-steel">{label}</span>
+      <span className={clsx("num text-[13px]", accent ? "text-amber" : "text-ink")}>{value}</span>
+    </div>
+  );
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <EntryTag rating={plan.rating} full />
+        {plan.atrFrom20 != null && (
+          <span className="num text-[10px] text-steel">
+            {Math.abs(plan.atrFrom20).toFixed(1)} ATR {plan.atrFrom20 >= 0 ? "above" : "below"} the 20 DMA
+          </span>
+        )}
+      </div>
+      <p className="text-[12.5px] leading-snug text-ink">{plan.note}</p>
+      <div className="grid grid-cols-4 gap-3 border-t border-line pt-2.5">
+        {cell(plan.entryKind === "limit" ? "Limit entry" : "Entry", inr(plan.entry), true)}
+        {cell("Stop", inr(plan.stop))}
+        {cell("Target", inr(plan.target))}
+        {cell("Reward:risk", plan.rewardRisk != null ? `${plan.rewardRisk.toFixed(1)}x` : "—")}
+      </div>
+      <p className="text-[11px] leading-snug text-steel">
+        Tested on 2017 to 2026: buying a Good entry at the next open did no better than a random day. Waiting for a pullback limit beat buying
+        at once by roughly 0.7% over the next week, and the limit filled about 40% of the time. Learning only, not advice.
+      </p>
+    </div>
+  );
+}
 
 function RewardRisk({ price, stop, target }: { price: number; stop: number; target: number }) {
   const valid = stop < price && target > price;
@@ -464,6 +498,9 @@ export function StockView({ detail }: { detail: StockDetail }) {
                 ) : (
                   <p className="text-[12.5px] text-steel">Not enough history to set levels.</p>
                 )}
+              </Card>
+              <Card index={3} title="Entry" right={<Freshness mode="eod" at={row.indDate} />}>
+                {row.entry ? <EntryBlock plan={row.entry} /> : <p className="text-[12.5px] text-steel">No entry rating yet.</p>}
               </Card>
               <Card index={4} title="Technicals" right={<Freshness mode="eod" at={row.indDate} />}>
                 {price != null && <Tech row={row} price={price} />}

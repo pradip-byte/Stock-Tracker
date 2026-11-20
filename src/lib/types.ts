@@ -1,3 +1,4 @@
+import type { EntryPlan } from "./entry";
 export type Candle = {
   time: string; // YYYY-MM-DD (IST)
   open: number;
@@ -77,6 +78,14 @@ export type StockRow = {
   shortReasons: string[];
   longReasons: string[];
   odds: SignalOdds | null;
+  // Phase 5
+  /** 12-1 month momentum rank among tracked stocks, 0 to 100. */
+  momRank: number | null;
+  /** Six-month return minus Nifty 50's, percentage points. */
+  rs6: number | null;
+  /** Nifty 50 above its 200 DMA when the score was computed. */
+  marketUp: boolean | null;
+  entry: EntryPlan | null;
 };
 
 export type SectorGroup = { sector: string; symbols: string[] };

@@ -9,6 +9,7 @@ import { analyseQuarters, eventScore, fiscalLabel, postResultReaction } from "..
 import { dayDiff } from "../format";
 import { isAfterClose, isMarketOpen, istParts, todayIST } from "../market";
 import { getProvider } from "../providers";
+import { entryPlan, heldBreakout } from "../entry";
 import { momentum12, percentileRank, returnOver } from "../factors";
 import { computeSeries, snapshotAt, technicalScore } from "../signals";
 import { adminDb } from "../supabase/admin";
@@ -174,6 +175,24 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
     odds,
   });
 
+  // entry rating: where the price sits relative to a sensible entry for the short-term view
+  const plan = entryPlan({
+    close: last.close,
+    sma20: series.sma20[n - 1],
+    sma20Ago: n > 6 ? series.sma20[n - 6] : null,
+    atr: series.atr[n - 1],
+    rsi: series.rsi[n - 1],
+    uptrend: last.sig_trend,
+    favourable: v.shortVerdict === "Favourable",
+    freshBreakout: heldBreakout(candles, series.volRatio, n - 1, 3),
+    recentBreakout: heldBreakout(candles, series.volRatio, n - 1, 10),
+    target: t.target,
+    stop: t.stop,
+  });
+  if (market?.up === false && plan.rating !== "No setup") {
+    plan.note += " Nifty 50 is below its 200 DMA: these setups did worse in that condition in testing.";
+  }
+
   const { error: e2 } = await db.from("scores").upsert(
     {
       symbol,
@@ -193,6 +212,7 @@ export async function recomputeSymbol(db: SupabaseClient, symbol: string, days =
       mom_rank: momRank,
       rs6,
       market_up: market?.up ?? null,
+      entry: plan,
       verdict_reasons: {
         short: v.shortReasons,
         long: v.longReasons,

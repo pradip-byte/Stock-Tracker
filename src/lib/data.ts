@@ -81,6 +81,10 @@ function mapRow(r: any): StockRow {
     shortReasons: Array.isArray(r.verdict_reasons?.short) ? r.verdict_reasons.short : [],
     longReasons: Array.isArray(r.verdict_reasons?.long) ? r.verdict_reasons.long : [],
     odds: r.verdict_reasons?.odds ?? null,
+    momRank: n(r.mom_rank),
+    rs6: n(r.rs6),
+    marketUp: r.market_up ?? null,
+    entry: r.entry && typeof r.entry === "object" && typeof r.entry.rating === "string" ? r.entry : null,
   };
 }
 

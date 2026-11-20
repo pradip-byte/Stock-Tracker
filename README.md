@@ -137,6 +137,16 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
     breakdown warning did not predict falls. Post-result drift could not be tested (the data provider has
     announcement times for about four quarters only). The universe is today's index members, so every
     return in the research is flattered by survivorship.
+  - *Entry rating* (`src/lib/entry.ts`), shown next to the short-term verdict on the stocks list and the stock
+    page with a suggested entry, stop, target and reward-to-risk. Checked in this order: **Extended, don't
+    chase** (more than 3 ATR above the 20 DMA, or RSI above 75), **Good entry** (uptrend, reward-to-risk of 2
+    or more, and within 1 ATR of a rising 20 DMA or a volume breakout in the last 3 sessions), **Wait for
+    pullback** (short-term Favourable but more than 2 ATR above the 20 DMA; the limit is the 20 DMA or a
+    recent breakout level, the stop 1.5 ATR below it), otherwise **No setup**. The labels are backtested by
+    `npm run research`: a Good entry bought at the next open did no better than a random day; a pullback
+    limit, when filled within 10 sessions (about 40% of the time), beat buying at once by roughly 0.7% over
+    five sessions in both periods; every entry setup did worse with Nifty 50 below its 200 DMA. The backtest
+    uses the uptrend in place of a Favourable verdict, because past verdicts cannot be rebuilt.
   - 65+ Favourable, 45-64 Neutral, under 45 Avoid. The 3-5 largest factors are stored as the reasons.
   - *Overall score:* weighted mean of the scores that exist (technical 0.45, event 0.30, external 0.25).
   - *Risk:* from ATR as a share of price, raised one level when a result is within 7 days and set to High on
