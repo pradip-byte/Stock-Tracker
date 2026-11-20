@@ -31,7 +31,9 @@ export const allowedEmail = () => (process.env.ALLOWED_EMAIL ?? "").trim().toLow
  */
 export async function sessionEmail(): Promise<string | null> {
   const email = (await headers()).get("x-st-user")?.toLowerCase() ?? null;
-  return email && allowedEmail() && email === allowedEmail() ? email : null;
+  if (email) return allowedEmail() && email === allowedEmail() ? email : null;
+  // No header (a route the proxy does not cover, or the header did not arrive): check with Supabase directly.
+  return (await currentUser())?.email?.toLowerCase() ?? null;
 }
 
 /** Guard for cached page data, which is read with the service client: only for a verified session. */

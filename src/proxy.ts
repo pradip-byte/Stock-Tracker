@@ -10,7 +10,6 @@ const USER_HEADER = "x-st-user";
  * from a request header instead of asking Supabase a second time.
  */
 export async function proxy(request: NextRequest) {
-  request.headers.delete(USER_HEADER);
   let response = NextResponse.next({ request });
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookies: {
@@ -33,12 +32,14 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
   if (ok && path === "/login") return NextResponse.redirect(new URL("/", request.url));
-  if (!ok) return response;
-  // forward the verified email, keeping any refreshed session cookies
-  request.headers.set(USER_HEADER, email!);
-  const verified = NextResponse.next({ request });
-  for (const c of response.cookies.getAll()) verified.cookies.set(c);
-  return verified;
+  // Replace the request headers explicitly: the verified email when signed in, and never
+  // whatever the browser sent under that name. Refreshed session cookies are carried over.
+  const forwarded = new Headers(request.headers);
+  if (ok) forwarded.set(USER_HEADER, email!);
+  else forwarded.delete(USER_HEADER);
+  const next = NextResponse.next({ request: { headers: forwarded } });
+  for (const c of response.cookies.getAll()) next.cookies.set(c);
+  return next;
 }
 
 export const config = {
