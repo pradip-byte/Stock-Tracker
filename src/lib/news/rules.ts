@@ -153,7 +153,7 @@ export const NEWS_BLOCKED = [
   "whalesbook", "investywise", "stockanalysis", "ainvest", "munafasutra", "blinkx", "sahi", "stocktwits", "investing.com", "marketbeat", "defense world",
   "tipranks", "moomoo", "equitypandit", "trendlyne", "tickertape", "insidermonkey", "zacks", "gurufocus", "seeking alpha", "motley fool",
   "kalkine", "global banking & finance", "globalbankingandfinance", "inshorts", "business upturn", "businessupturn", "markhub24", "stockiq",
-  "taxpayers for common sense", "taxpayer.net", "linkedin",
+  "taxpayers for common sense", "taxpayer.net", "linkedin", "facebook", "youtube", "instagram", "reddit", "quora",
 ];
 
 export function blockedSource(source: string | null, sourceUrl: string | null): boolean {
@@ -169,7 +169,8 @@ export function lowValueTitle(title: string): boolean {
   return (
     /\b(falls?|rises?|gains?|declines?|drops?|jumps?|slips?|advances?) [\d.]+% in \w+day'?s? (session|trade)/i.test(title) ||
     /\b(share|stock) price (today )?(live|updates?)\b|live updates?:|\bprice today\b.*\bcheck\b|investor analysis|stocks? today, \w+ \d+:/i.test(title) ||
-    /\b(gold|silver)\b.*\b(price|rate)s?\b/i.test(title)
+    /\b(gold|silver)\b.*\b(price|rate)s?\b/i.test(title) ||
+    /stock price, news, quote/i.test(title)
   );
 }
 
