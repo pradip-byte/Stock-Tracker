@@ -3,7 +3,8 @@ import { cronAuthorised } from "@/lib/cron-auth";
 import { runEod } from "@/lib/jobs/core";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// The last batch of the day also refreshes quotes, the macro row, paper trades and the shadow book.
+export const maxDuration = 120;
 
 async function handle(request: Request) {
   if (!cronAuthorised(request)) return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
