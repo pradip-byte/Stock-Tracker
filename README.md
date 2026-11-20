@@ -122,6 +122,20 @@ To refresh the Nifty 200 list, replace `data/nifty200.csv` with the current file
   (the same measure for any day in the same history) so a signal can be judged against doing nothing special.
   Returns are close-to-close with no costs, taxes or slippage. Results are stored per stock, per sector and
   for all stocks; a stock with fewer than 8 past cases falls back to its sector, then to all stocks.
+- **Speed.**
+  - Functions run in Tokyo (`vercel.json`, region `hnd1`), next to the Supabase database in ap-northeast-1.
+  - Page data is cached with `unstable_cache` (`src/lib/data.ts`): quotes for 60 seconds, the dashboard, the
+    stocks list and each stock page for 2 minutes, price history for 15 minutes. Cron routes mark the
+    `quotes` and `eod` tags stale when they change data, and server actions expire them at once, so a change
+    you make shows immediately. Cached loaders read with the service client, and only after the proxy has
+    verified the session for that request. Paper trades and job history are always read live.
+  - The proxy verifies the session with Supabase once per request and passes the verified email to the page
+    in a request header it always overwrites; pages do not ask Supabase a second time.
+  - The candle chart (library and ten-year history, `/api/candles/[symbol]`) loads after the page has painted.
+  - Entrance animations for cards, headlines, verdicts and reasons are CSS and start at the first paint, so
+    content does not wait for JavaScript. The whole sequence fits inside the first second.
+  - `/api/cron/perf?page=dashboard|stocks|stock|candles&symbol=INFY[&fresh=1]` (cron secret) reports how long
+    a page's data took and how many database calls it made. It returns numbers only.
 - **Paper trading** (`src/lib/jobs/paper.ts`, table `paper_trades`). Pretend trades for learning; no order is
   placed anywhere.
   - *My trades:* the stocks list has "Paper ST" and "Paper LT" columns. A paper buy takes an amount in rupees
